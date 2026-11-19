@@ -497,6 +497,11 @@ app.put('/api/settings/invoice', superOnly, async (req, res) => {
   const invoice = {prefix, terms:terms.length ? terms : S.DEFAULT_TERMS};
   await setKV('invoice', invoice); res.json({ok:true, invoice});
 });
+app.put('/api/settings/wa', superOnly, async (req, res) => {
+  const b = obj(obj(req.body).templates), wa = {};
+  for (const [k, label] of S.WA_KINDS){ const v = str(b[k], 1500, `“${label}” message`); wa[k] = v || S.WA_DEFAULTS_HI[k]; }
+  await setKV('wa', wa); res.json({ok:true, wa});
+});
 app.put('/api/settings/cats', superOnly, async (req, res) => {
   const list = arr(obj(req.body).cats).slice(0, 30).map(x => ({from:str(obj(x).from, 40, 'Category'), to:str(obj(x).to, 40, 'Category')}));
   if (!list.length || list.some(x => !x.to)) fail('Every category needs a name');

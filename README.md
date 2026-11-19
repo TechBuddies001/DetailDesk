@@ -21,7 +21,7 @@ It has three kinds of login:
   - Prints on A4. The job card prints on A5.
   - Each invoice has a customer link (`/i/<token>`) where the customer can view it, save it as PDF and pay by UPI (link and QR).
   - Each job card has a tracking link (`/j/<token>`).
-- **WhatsApp:** opens WhatsApp (wa.me) with the message and link filled in. Staff check it and tap Send. No API account or cost.
+- **WhatsApp:** opens WhatsApp (wa.me) with the message and link filled in. Staff check it and tap Send. No API account or cost. Messages are in Hinglish by default.
 - **Payments:** UPI, cash, card or bank. Part payments are allowed. The advance is adjusted automatically.
 - **Customers:** cars, visits, history and warranties.
 - **Owner-only Settings:**
@@ -37,6 +37,7 @@ It has three kinds of login:
 - Edit customer and car details. Open job cards update too; invoices keep what was printed.
 - Change the invoice number prefix (numbering continues) and the terms printed on invoices.
 - Add, rename or remove service categories. PPF and Coating stay fixed.
+- Edit every WhatsApp message (job card, update, car ready, invoice, payment reminder, estimate, customer message). There is a live preview, and one click brings back the Hinglish or English defaults. Words in `{curly brackets}` are filled in by the app; a line whose word has nothing to fill is left out.
 
 The Owner keeps everything else in Settings and manages Manager logins.
 

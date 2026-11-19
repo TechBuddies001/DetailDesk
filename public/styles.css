@@ -461,3 +461,9 @@ body.pub{background:var(--bg)}
 .ejl{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:8px;align-items:center}
 .ejadd{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-top:8px}
 @media (max-width:640px){ .ejadd{grid-template-columns:minmax(0,1fr)} .ejl{grid-template-columns:minmax(0,1fr) 90px auto} }
+
+/* WhatsApp message editor */
+.wa-edit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.wa-edit textarea{font-family:var(--f-mono);font-size:12.5px}
+.wa-edit .chat{min-height:120px}
+@media (max-width:900px){ .wa-edit{grid-template-columns:minmax(0,1fr)} }

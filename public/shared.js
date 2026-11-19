@@ -237,8 +237,52 @@ function jobPaper(j, biz, qr, sigUrl){
   </div>`;
 }
 
+/* ================= WhatsApp message templates ================= */
+// {placeholder} gets filled in; a line whose placeholder has nothing to fill is skipped.
+const WA_KINDS = [
+  ['jobcard', 'Job card created', ['jobid', 'services', 'estimate', 'advance', 'due', 'link']],
+  ['update', 'Work update', ['jobid', 'bay', 'due', 'link']],
+  ['ready', 'Car ready for pickup', ['jobid', 'balance', 'link']],
+  ['invoice', 'Invoice', ['invoice', 'total', 'paid', 'balance', 'warranty', 'link']],
+  ['due', 'Payment reminder', ['invoice', 'balance', 'link']],
+  ['estimate', 'Estimate (while making a job card)', ['lines', 'discount', 'gst', 'estimate', 'advance']],
+  ['hello', 'Message from the Customers page', []]
+];
+const WA_COMMON = ['name', 'fullname', 'vehicle', 'car', 'reg', 'business'];
+const WA_DEFAULTS_HI = {
+  jobcard:'Namaste {name} ji, aapki {vehicle} {business} pe aa gayi hai.\n\nJob card: {jobid}\n{services}\nEstimate: {estimate}\nAdvance mila: {advance}\nDelivery: {due}\n\nGaadi ka status yahan dekhein: {link}\n\n– Team {business}',
+  update:'Namaste {name} ji, aapki {vehicle} ka kaam chal raha hai.\nBay: {bay}\nDelivery: {due}\n\nStatus yahan dekhein: {link}\n\n– Team {business}',
+  ready:'Namaste {name} ji, aapki {vehicle} ready hai! Aap aakar le ja sakte hain.\n\nBaaki payment: {balance}\n\n– Team {business}',
+  invoice:'Namaste {name} ji, {business} chunne ke liye dhanyavaad.\n\nInvoice: {invoice}\n{vehicle}\nTotal: {total}\nPaid: {paid}\nBaaki: {balance}\n\n{warranty}\n\nInvoice dekhein, PDF save karein ya pay karein: {link}\n\n– Team {business}',
+  due:'Namaste {name} ji, aapki {vehicle} ke invoice {invoice} ka {balance} baaki hai.\n\nYahan se dekh kar UPI se pay kar sakte hain: {link}\n\nDhanyavaad!\n– Team {business}',
+  estimate:'Namaste {name} ji, {business} ki taraf se aapka estimate:\n\n{vehicle}\n{lines}\nDiscount: {discount}\nGST 18%: {gst}\nTotal: {estimate}\nAdvance: {advance}\n\n– Team {business}',
+  hello:'Namaste {name} ji, {business} se namaskar! Aapki {car} ko aaye kaafi time ho gaya. Koi din bata dijiye, hum slot ready rakhenge.\n\n– Team {business}'
+};
+const WA_DEFAULTS_EN = {
+  jobcard:'Hi {name}, your {vehicle} is checked in at {business}.\n\nJob card: {jobid}\n{services}\nEstimate: {estimate}\nAdvance paid: {advance}\nExpected delivery: {due}\n\nTrack your car: {link}\n\n– Team {business}',
+  update:'Hi {name}, a quick update on your {vehicle}: work is going on and is on track for {due}.\n\nTrack your car: {link}\n\n– Team {business}',
+  ready:'Hi {name}, your {vehicle} is ready for pickup!\n\nBalance to pay: {balance}\n\n– Team {business}',
+  invoice:'Hi {name}, thank you for choosing {business}.\n\nInvoice {invoice}\n{vehicle}\nTotal: {total}\nPaid: {paid}\nBalance: {balance}\n\n{warranty}\n\nView, save as PDF or pay: {link}\n\n– Team {business}',
+  due:'Hi {name}, a gentle reminder that {balance} is pending on invoice {invoice} for your {vehicle}.\n\nView and pay here: {link}\n\nThank you!\n– Team {business}',
+  estimate:'Hi {name}, here is your estimate from {business}.\n\n{vehicle}\n{lines}\nDiscount: {discount}\nGST 18%: {gst}\nTotal: {estimate}\nAdvance: {advance}\n\n– Team {business}',
+  hello:"Hi {name}, greetings from {business}! It's been a while since your {car} visited us. Reply with a day that suits you and we'll keep a slot ready.\n\n– Team {business}"
+};
+function fillTemplate(tpl, vars){
+  const lines = String(tpl ?? '').replace(/\r/g, '').split('\n').map(line => {
+    let drop = false;
+    const s = line.replace(/\{(\w+)\}/g, (m, k) => {
+      if (!Object.prototype.hasOwnProperty.call(vars, k)) return m; // unknown placeholder: leave it so the mistake is visible
+      const v = vars[k];
+      if (v === '' || v === null || v === undefined){ drop = true; return ''; }
+      return String(v);
+    });
+    return drop ? null : s;
+  }).filter(l => l !== null);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 if (typeof module !== 'undefined' && module.exports){
   module.exports = {esc, inr, f2, digits, fmtPh, norm, hit, pad, MON, isoD, isoDT, parseDT, validDT, todayS, isToday, fD, fDY, fDT, fTime, fyOf,
     SEGS, SEGF, CATS, CATALOG0, COVER, PANELS, PANEL, FRONT_KIT, DMG, BEL, SLOTS, TERMS, PAY_MODES,
-    DEFAULT_TERMS, FIXED_CATS, svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, invPaper, jobPaper};
+    DEFAULT_TERMS, FIXED_CATS, WA_KINDS, WA_COMMON, WA_DEFAULTS_HI, WA_DEFAULTS_EN, fillTemplate, svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, invPaper, jobPaper};
 }

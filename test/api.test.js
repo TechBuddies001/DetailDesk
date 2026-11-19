@@ -221,3 +221,16 @@ test('upgrade: an older owner login becomes the Super Admin on start', async () 
   assert.equal((await D.one('SELECT role FROM users WHERE id = 1')).role, 'superadmin');
   assert.equal(Number((await D.one("SELECT COUNT(*) AS n FROM users WHERE role = 'superadmin'")).n), 1);
 });
+
+test('WhatsApp messages: Hinglish by default, only the Super Admin edits them', async () => {
+  let r = await owner.get('/api/boot'); assert.equal(r.data.wa.ready, S.WA_DEFAULTS_HI.ready);
+  r = await anon.put('/api/settings/wa', {templates:{}}); assert.equal(r.status, 401);
+  const cl = client(); await owner.post('/api/users', {name:'Owner Two', login:'9811188888', password:'owner222', role:'admin'});
+  await cl.post('/api/login', {login:'9811188888', password:'owner222'});
+  r = await cl.put('/api/settings/wa', {templates:{ready:'x'}}); assert.equal(r.status, 403);
+  r = await owner.put('/api/settings/wa', {templates:{ready:'x'.repeat(1501)}}); assert.equal(r.status, 400);
+  r = await owner.put('/api/settings/wa', {templates:{...S.WA_DEFAULTS_EN, ready:'Ready {name}! {vehicle}', bogus:'ignored'}}); assert.equal(r.status, 200);
+  assert.equal(r.data.wa.ready, 'Ready {name}! {vehicle}'); assert.equal(r.data.wa.bogus, undefined); assert.equal(r.data.wa.invoice, S.WA_DEFAULTS_EN.invoice);
+  r = await owner.put('/api/settings/wa', {templates:{ready:''}}); assert.equal(r.data.wa.ready, S.WA_DEFAULTS_HI.ready, 'empty falls back to the default');
+  r = await cl.get('/api/boot'); assert.equal(r.data.wa.ready, S.WA_DEFAULTS_HI.ready, 'everyone gets the saved messages');
+});

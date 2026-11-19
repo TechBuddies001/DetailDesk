@@ -59,7 +59,7 @@ function showAuth(sess){
 }
 async function enterApp(){
   const b = await api('/api/boot');
-  Object.assign(S, {me:b.me, biz:b.biz, perms:b.perms, catalog:b.catalog, bays:b.bays, staff:b.staff, invoice:b.invoice || {prefix:'INV', terms:DEFAULT_TERMS}, cats:b.cats || CATS.slice(1), catEdit:null});
+  Object.assign(S, {me:b.me, biz:b.biz, perms:b.perms, catalog:b.catalog, bays:b.bays, staff:b.staff, invoice:b.invoice || {prefix:'INV', terms:DEFAULT_TERMS}, cats:b.cats || CATS.slice(1), catEdit:null, wa:b.wa || WA_DEFAULTS_HI, waEdit:null});
   draftCache = null;
   document.body.classList.remove('auth-on'); $('#auth').hidden = true; $('#auth').innerHTML = '';
   fromHash(); await load(true);
@@ -515,7 +515,7 @@ function vCustomers(d){
 /* ---------- settings ---------- */
 function vSettings(d){
   const t = S.setTab, b = S.biz, p = S.perms;
-  const tabs = [['business', 'Business & GST'], ['prices', 'Services & prices'], ['team', 'Bays & team'], ['logins', 'Logins & access'], ...(isSuper() ? [['invoice', 'Invoice & categories']] : [])];
+  const tabs = [['business', 'Business & GST'], ['prices', 'Services & prices'], ['team', 'Bays & team'], ['logins', 'Logins & access'], ...(isSuper() ? [['invoice', 'Invoice & categories'], ['wa', 'WhatsApp messages']] : [])];
   let body = '';
   if (t === 'business') body = `<section class="card"><div class="card-b"><div class="grid2">
       <div class="field"><label for="b-name">Business name</label><input class="inp" id="b-name" data-biz="name" value="${esc(b.name)}"></div>
@@ -564,6 +564,17 @@ function vSettings(d){
         return `<div class="row"><input class="inp" style="flex:1;min-width:160px" data-cat="${i}" value="${esc(c.to)}" ${fixed ? 'disabled' : ''} aria-label="Category name" placeholder="New category name"><span class="small muted" style="min-width:90px">${c.from ? `${n} service${n === 1 ? '' : 's'}` : 'new'}</span>${fixed ? chip(ico('lock') + ' Fixed', 'mute') : `<button class="x" data-act="catrm" data-i="${i}" aria-label="Remove category">×</button>`}</div>`; }).join('')}
       <div><button class="btn pri" data-act="catsave">${ico('check')} Save categories</button></div>
     </div></section>`;
+  }
+  if (t === 'wa' && isSuper()){
+    if (!S.waEdit) S.waEdit = {...WA_DEFAULTS_HI, ...S.wa};
+    const smp = waSample();
+    body = `<section class="card"><div class="card-h"><h3>WhatsApp messages</h3><div class="row"><button class="btn sm" data-act="wapreset" data-lang="hi">Use Hinglish defaults</button><button class="btn sm" data-act="wapreset" data-lang="en">Use English defaults</button></div></div>
+      <div class="card-b stack">
+        <p class="small muted">Write the message the way you want. Words in {curly brackets} are filled in by the app. If a line has a {word} with nothing to fill (for example no advance was paid), that whole line is left out.</p>
+        ${WA_KINDS.map(([k, label, vars]) => `<div class="wa-edit"><div class="field"><label for="wa-${k}">${label}</label><textarea class="inp" id="wa-${k}" data-wat="${k}" rows="9" maxlength="1500">${esc(S.waEdit[k])}</textarea><span class="hint">${[...WA_COMMON, ...vars].map(v => `{${v}}`).join(' ')}</span></div>
+          <div class="field"><span class="lbl">Preview</span><div class="chat"><div class="bubble" id="wap-${k}">${esc(fillTemplate(S.waEdit[k], smp))}</div></div></div></div>`).join('')}
+        <div><button class="btn pri" data-act="wasave">${ico('check')} Save messages</button></div>
+      </div></section>`;
   }
   return ph('Settings', 'Settings', isSuper() ? 'Owner settings, plus Super Admin options in the last tab.' : 'Only you (Admin) can see this page.') + `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${t === k}" data-act="stab" data-tab="${k}">${l}</button>`).join('')}</div><div style="max-width:960px">${body}</div>`;
 }
@@ -652,27 +663,38 @@ async function go(view, d = {}){
 window.addEventListener('popstate', () => { if (!S.me) return; const before = S.view + S.jobId; fromHash(); if (S.view + S.jobId !== before) load(true); });
 
 /* ================= WhatsApp, print, modals ================= */
+const vehicleOf = (car, reg) => car ? `${car}${reg ? ` (${reg})` : ''}` : (reg || '');
+function waBase(name, car, reg){ const n = String(name || '').trim(); return {name:n.split(/\s+/)[0] || '', fullname:n, vehicle:vehicleOf(car, reg), car:car || '', reg:reg || '', business:S.biz.name || ''}; }
+const waTpl = k => (S.wa && S.wa[k]) || WA_DEFAULTS_HI[k];
 async function waMsg(k, d){
-  const b = S.biz.name, first = n => String(n || '').trim().split(/\s+/)[0] || 'there';
   if (k === 'estimate'){
     const w = W(), lines = wLines(), t = totals(lines, w.disc, !!S.biz.gst), adv = Math.min(+w.adv || 0, t.total);
-    return {title:'Estimate', to:w.f.name || 'Customer', ph:w.f.mob,
-      text:`Hi ${first(w.f.name)}, here is your estimate from ${b}.\n\n${w.f.model || 'Your car'}${w.f.reg ? ` (${w.f.reg.toUpperCase()})` : ''}\n${lines.map(l => `• ${l.name}: ${inr(l.amt)}`).join('\n') || '• Services to be added'}${t.disc ? `\nDiscount ${w.disc}%: −${inr(t.disc)}` : ''}${t.half ? `\nGST 18%: ${inr(t.total - t.taxable)}` : ''}\nTotal: ${inr(t.total)}${adv ? `\nAdvance: ${inr(adv)} (${w.mode})` : ''}\n\n– Team ${b}`};
+    const vars = {...waBase(w.f.name, w.f.model, (w.f.reg || '').toUpperCase()), lines:lines.map(l => `• ${l.name}: ${inr(l.amt)}`).join('\n'), discount:t.disc ? `${w.disc}% (−${inr(t.disc)})` : '',
+      gst:t.half ? inr(t.total - t.taxable) : '', estimate:lines.length ? inr(t.total) : '', advance:adv ? `${inr(adv)} (${w.mode})` : ''};
+    return {title:'Estimate', to:w.f.name || 'Customer', ph:w.f.mob, text:fillTemplate(waTpl(k), vars)};
   }
   if (k === 'invoice' || k === 'due'){
     const cur = S.data && S.data.cur && S.data.cur.inv && S.data.cur.inv.no === d.no ? S.data.cur : await api(`/api/invoice?no=${enc(d.no)}`);
     const v = cur.inv, t = invTot(v), bal = balOf(v);
-    if (k === 'due') return {title:'Payment reminder', to:v.cust, ph:v.ph, jobId:v.jobId, text:`Hi ${first(v.cust)}, a gentle reminder that ${inr(bal)} is pending on invoice ${v.no} for your ${v.car} (${v.reg}).\n\nView and pay here: ${cur.link}\n\nThank you!\n– Team ${b}`};
-    return {title:'Invoice', to:v.cust, ph:v.ph, jobId:v.jobId, text:`Hi ${first(v.cust)}, thank you for choosing ${b}.\n\nInvoice ${v.no}\n${v.car} (${v.reg})\nTotal: ${inr(t.total)}\nPaid: ${inr(paidOf(v))}${bal > 0 ? `\nBalance: ${inr(bal)}` : ''}${v.warr.length ? `\n\nWarranty:\n${v.warr.map(w => '• ' + w).join('\n')}` : ''}\n\nView, save as PDF${bal > 0 ? ' or pay' : ''}: ${cur.link}\n\n– Team ${b}`};
+    const vars = {...waBase(v.cust, v.car, v.reg), invoice:v.no, total:inr(t.total), paid:inr(paidOf(v)), balance:bal > 0 ? inr(bal) : '',
+      warranty:v.warr.length ? 'Warranty:\n' + v.warr.map(w => '• ' + w).join('\n') : '', link:cur.link};
+    return {title:k === 'due' ? 'Payment reminder' : 'Invoice', to:v.cust, ph:v.ph, jobId:v.jobId, text:fillTemplate(waTpl(k), vars)};
   }
   if (k === 'hello'){
     const c = S.data && S.data.cur && S.data.cur.id === +d.id ? S.data.cur : await api(`/api/customers/${enc(d.id)}`);
-    return {title:'Message', to:c.name, ph:c.ph, text:`Hi ${first(c.name)}, greetings from ${b}! ${c.cars[0] ? `It's been a while since your ${c.cars[0].model} visited us. ` : ''}Reply with a day that suits you and we'll keep a slot ready.\n\n– Team ${b}`};
+    return {title:'Message', to:c.name, ph:c.ph, text:fillTemplate(waTpl(k), waBase(c.name, c.cars[0] && c.cars[0].model, c.cars[0] && c.cars[0].reg))};
   }
   const jd = S.data && S.data.job && S.data.job.id === d.id ? S.data : await api(`/api/jobs/${enc(d.id)}`), j = jd.job, t = jobTot(j);
-  if (k === 'jobcard') return {title:'Job card', to:j.cust, ph:j.ph, jobId:j.id, text:`Hi ${first(j.cust)}, your ${j.car} (${j.reg}) is checked in at ${b}.\n\nJob card: ${j.id}\n${j.lines.map(l => `• ${l.name}`).join('\n')}\nEstimate: ${inr(t.total)}${t.half ? ' incl. GST' : ''}${j.paid ? `\nAdvance paid: ${inr(j.paid)}` : ''}\nExpected delivery: ${fDT(j.due)}\n\nTrack your car: ${jd.link}\n\n– Team ${b}`};
-  if (k === 'ready') return {title:'Car ready', to:j.cust, ph:j.ph, jobId:j.id, text:`Hi ${first(j.cust)}, your ${j.car} (${j.reg}) is ready for pickup!\n\nBalance to pay: ${inr(Math.max(0, j.bal))}\n\n– Team ${b}`};
-  return {title:'Work update', to:j.cust, ph:j.ph, jobId:j.id, text:`Hi ${first(j.cust)}, a quick update on your ${j.car} (${j.reg}): work is going on${j.bay ? ' in ' + j.bay : ''} and is on track for ${fDT(j.due)}.\n\nTrack your car: ${jd.link}\n\n– Team ${b}`};
+  const vars = {...waBase(j.cust, j.car, j.reg), jobid:j.id, services:j.lines.map(l => `• ${l.name}`).join('\n'), estimate:inr(t.total), advance:j.paid && !j.inv ? inr(j.paid) : '',
+    due:fDT(j.due), link:jd.link, bay:j.bay || '', balance:j.bal > 0 ? inr(j.bal) : ''};
+  const title = {jobcard:'Job card', ready:'Car ready', update:'Work update'}[k] || 'Message';
+  return {title, to:j.cust, ph:j.ph, jobId:j.id, text:fillTemplate(waTpl(k), vars)};
+}
+// sample data for the message editor preview
+function waSample(){
+  return {...waBase('Rahul Verma', 'Tata Harrier', 'MH 12 VD 9081'), jobid:'JC-0012', services:'• Full body PPF\n• Ceramic coating 9H · 2 layer', estimate:inr(163106), advance:inr(50000),
+    due:'Tomorrow, 6:00 PM', link:`${location.origin}/j/…`, bay:'Bay 2', balance:inr(113106), invoice:`${S.invoice.prefix}/26-27/0012`, total:inr(163106), paid:inr(50000),
+    warranty:'Warranty:\n• PPF · Full body, Gloss · 5 yr warranty (till Nov 2031)', lines:`• Full body PPF: ${inr(135000)}\n• Clay bar + 1-step polish: ${inr(6000)}`, discount:`5% (−${inr(7275)})`, gst:inr(24881)};
 }
 async function openWA(k, d){
   let m;
@@ -845,7 +867,7 @@ document.addEventListener('click', async e => {
     case 'retry': load(true); break;
     case 'jtab': S.jobTab = d.tab; load(false); break;
     case 'itab': S.invTab = d.tab; load(false); break;
-    case 'stab': S.setTab = d.tab; S.catEdit = null; render(); break;
+    case 'stab': S.setTab = d.tab; S.catEdit = null; S.waEdit = null; render(); break;
     case 'pickinv': S.invNo = d.no; await act(async () => { S.data.cur = await api(`/api/invoice?no=${enc(d.no)}`); render(); }); break;
     case 'pickcust': S.custId = +d.id; await act(async () => { S.data.cur = await api(`/api/customers/${enc(d.id)}`); render(); }); break;
     case 'clearq': S.q = ''; $('#q').value = ''; load(false); break;
@@ -956,6 +978,8 @@ document.addEventListener('click', async e => {
     case 'ejsave': ejSave(); break;
     case 'editcust': openEditCust(); break;
     case 'ecsave': { const r = await act(() => put(`/api/customers/${S.ec.id}`, S.ec), 'Customer updated'); if (r){ closeModal(); S.ec = null; load(false); } break; }
+    case 'wapreset': S.waEdit = {...(d.lang === 'en' ? WA_DEFAULTS_EN : WA_DEFAULTS_HI)}; render(); toast(d.lang === 'en' ? 'English messages filled in. Save to keep them.' : 'Hinglish messages filled in. Save to keep them.'); break;
+    case 'wasave': { const r = await act(() => put('/api/settings/wa', {templates:S.waEdit}), 'WhatsApp messages saved'); if (r){ S.wa = r.wa; S.waEdit = null; render(); } break; }
     case 'invsave': {
       const prefix = ($('#inv-prefix').value || '').trim(), terms = ($('#inv-terms').value || '').split('\n').map(x => x.trim()).filter(Boolean);
       const r = await act(() => put('/api/settings/invoice', {prefix, terms}), 'Invoice settings saved'); if (r){ S.invoice = r.invoice; render(); } break;
@@ -1028,6 +1052,7 @@ document.addEventListener('input', e => {
     if (ds.ecc){ const [i, k] = ds.ecc.split(':'); if (S.ec.cars[+i]) S.ec.cars[+i][k] = t.value; }
     return;
   }
+  if (ds.wat && S.waEdit){ S.waEdit[ds.wat] = t.value; const p = $('#wap-' + ds.wat); if (p) p.textContent = fillTemplate(t.value, waSample()); return; }
   if (ds.cat !== undefined && S.catEdit){ const c = S.catEdit[+ds.cat]; if (c) c.to = t.value; return; }
 });
 document.addEventListener('change', async e => {

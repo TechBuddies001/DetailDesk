@@ -70,7 +70,8 @@ const DEFAULTS = {
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],
   staff:[],
   invoice:{prefix:'INV', terms:S.DEFAULT_TERMS},
-  cats:S.CATS.slice(1)
+  cats:S.CATS.slice(1),
+  wa:S.WA_DEFAULTS_HI
 };
 async function init(){
   for (const s of SCHEMA) await pool.query(s);
