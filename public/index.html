@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#181B1F">
+<title>DetailDesk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/styles.css">
+<style id="page-size"></style>
+</head>
+<body class="auth-on">
+<div id="auth" class="auth" hidden></div>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M16 5.5c4.2 5.6 7.2 9.3 7.2 12.9a7.2 7.2 0 0 1-14.4 0c0-3.6 3-7.3 7.2-12.9z" fill="var(--accent-ink)"/><path d="M12.6 19.4a3.6 3.6 0 0 0 3 3.4" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <div><b>DetailDesk</b><span id="biz-name"></span></div>
+    </div>
+    <nav id="nav" class="ng" aria-label="Screens"></nav>
+    <div class="rail-foot" id="rail-foot"></div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <label class="search"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><input id="q" placeholder="Search car no., mobile or name" aria-label="Search" autocomplete="off"></label>
+      <div class="spacer"></div>
+      <button class="btn pri" data-act="go" data-view="new"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="bt">New job card</span></button>
+      <div id="who"></div>
+    </header>
+    <main id="content" class="content"></main>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="print-root"></div>
+<script src="/shared.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
