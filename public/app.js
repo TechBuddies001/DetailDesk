@@ -36,6 +36,8 @@ async function act(fn, okMsg){
 
 /* ================= auth screens ================= */
 function brandHTML(sub){ return `<div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M16 5.5c4.2 5.6 7.2 9.3 7.2 12.9a7.2 7.2 0 0 1-14.4 0c0-3.6 3-7.3 7.2-12.9z" fill="var(--accent-ink)"/></svg><div><b>DetailDesk</b><span>${esc(sub || '')}</span></div></div>`; }
+// Login screen: the studio logo when one is uploaded, otherwise the DetailDesk mark.
+function authBrand(biz, sub){ const u = logoUrl(biz); return u ? `<div class="auth-logo"><img src="${u}" alt="${esc(biz.name || '')}"></div>` : brandHTML(sub); }
 function showAuth(sess){
   closeModal();
   document.body.classList.add('auth-on');
@@ -49,7 +51,7 @@ function showAuth(sess){
       <div class="field"><label for="s-pw2">Password again</label><input class="inp" id="s-pw2" type="password" required minlength="6" autocomplete="new-password"></div>
       <p class="err" id="auth-err" role="alert"></p><button class="btn pri block" type="submit">Create owner login</button></form>`;
   } else {
-    el.innerHTML = `<form class="auth-card" id="login-form" autocomplete="on">${brandHTML(sess && sess.biz && sess.biz.name || '')}<h1>Log in</h1>
+    el.innerHTML = `<form class="auth-card" id="login-form" autocomplete="on">${authBrand(sess && sess.biz || {}, sess && sess.biz && sess.biz.name || '')}<h1>Log in</h1>
       <div class="field"><label for="l-login">Mobile number or username</label><input class="inp" id="l-login" required autocomplete="username"></div>
       <div class="field"><label for="l-pw">Password</label><input class="inp" id="l-pw" type="password" required autocomplete="current-password"></div>
       <p class="err" id="auth-err" role="alert"></p><button class="btn pri block" type="submit">Log in</button>
@@ -445,6 +447,24 @@ function initSig(){
     saveDraft();
   };
 }
+// Logo: keep transparency (PNG), shrink to at most 800 x 400.
+function prepLogo(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error('Could not read that file'));
+    r.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That file is not an image we can read'));
+      img.onload = () => {
+        const k = Math.min(1, 800 / img.width, 400 / img.height);
+        const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+        try { c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); resolve(c.toDataURL('image/png')); } catch (_) { reject(new Error('Could not process that image')); }
+      };
+      img.src = r.result;
+    };
+    r.readAsDataURL(file);
+  });
+}
 function compressPhoto(file){
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -517,8 +537,13 @@ function vSettings(d){
   const t = S.setTab, b = S.biz, p = S.perms;
   const tabs = [['business', 'Business & GST'], ['prices', 'Services & prices'], ['team', 'Bays & team'], ['logins', 'Logins & access'], ...(isSuper() ? [['invoice', 'Invoice & categories'], ['wa', 'WhatsApp messages']] : [])];
   let body = '';
-  if (t === 'business') body = `<section class="card"><div class="card-b"><div class="grid2">
+  if (t === 'business') body = `<section class="card"><div class="card-b">
+    <div class="logo-set"><div class="logo-box">${b.logo ? `<img src="${logoUrl(b)}" alt="Studio logo">` : '<span class="small muted">No logo</span>'}</div>
+      <div class="logo-txt"><div class="t">Logo</div><div class="small muted">Shown on invoices, job cards, the login screen and the menu. A PNG with a clear background looks best.</div>
+        <div class="logo-btns"><label class="btn sm">${ico('camera')} ${b.logo ? 'Change logo' : 'Upload logo'}<input type="file" accept="image/png,image/jpeg,image/webp" data-logo="1" aria-label="Upload logo"></label>${b.logo ? '<button class="btn sm" data-act="logorm">Remove</button>' : ''}</div></div></div>
+    <div class="grid2">
       <div class="field"><label for="b-name">Business name</label><input class="inp" id="b-name" data-biz="name" value="${esc(b.name)}"></div>
+      <div class="field"><label for="b-tag">Line under the name (optional)</label><input class="inp" id="b-tag" data-biz="tag" value="${esc(b.tag || '')}" maxlength="80" placeholder="e.g. By Prime Automotive"></div>
       <div class="field"><label for="b-ph">Phone (shown on invoices)</label><input class="inp" id="b-ph" data-biz="ph" value="${esc(b.ph)}"></div>
       <div class="field" style="grid-column:1/-1"><label for="b-addr">Address</label><input class="inp" id="b-addr" data-biz="addr" value="${esc(b.addr)}"></div>
       <div class="field"><label for="b-gstin">GSTIN</label><input class="inp up" id="b-gstin" data-biz="gstin" value="${esc(b.gstin)}" maxlength="15"></div>
@@ -610,10 +635,19 @@ function navHTML(){
     return `<button class="nv ${on ? 'on' : ''} ${lock ? 'dim' : ''}" data-act="go" data-view="${v}" ${on ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span>${extra}</button>`;
   }).join('');
 }
+// Menu brand: the studio logo when uploaded, otherwise the DetailDesk mark with the studio name.
+const RAIL_MARK = document.getElementById('rail-brand').innerHTML;
+function renderBrand(){
+  const el = $('#rail-brand'), u = logoUrl(S.biz), key = u + '|' + (S.biz.name || '');
+  if (el.dataset.k === key) return;
+  el.dataset.k = key; el.classList.toggle('has-logo', !!u);
+  if (u) el.innerHTML = `<img class="brand-logo" src="${u}" alt="${esc(S.biz.name || '')}">`;
+  else { el.innerHTML = RAIL_MARK; $('#biz-name').textContent = S.biz.name || ''; }
+}
 function render(){
   if (!S.me) return;
   $('#nav').innerHTML = navHTML();
-  $('#biz-name').textContent = S.biz.name || '';
+  renderBrand();
   $('#rail-foot').innerHTML = `Logged in as ${esc(S.me.name)} (${myRole()}). <button data-act="logout">Log out</button>`;
   $('#who').innerHTML = `<button class="who-btn" data-act="account" aria-label="Account">${av(S.me.name)}<span class="who-t"><b>${esc(S.me.name)}</b><br><span class="muted">${myRole()}</span></span></button>`;
   const v = S.view;
@@ -836,7 +870,7 @@ function openEditCust(){
 
 /* ================= settings saving ================= */
 let bizT, priceT, permT;
-function saveBiz(){ clearTimeout(bizT); bizT = setTimeout(async () => { const st = $('#biz-state'); try { const r = await put('/api/settings/biz', S.biz); S.biz = r.biz; $('#biz-name').textContent = S.biz.name; if (st) st.textContent = 'Saved.'; } catch (e){ if (st) st.textContent = e.message; else toast(e.message); } }, 700); }
+function saveBiz(){ clearTimeout(bizT); bizT = setTimeout(async () => { const st = $('#biz-state'); try { const r = await put('/api/settings/biz', S.biz); S.biz = r.biz; renderBrand(); if (st) st.textContent = 'Saved.'; } catch (e){ if (st) st.textContent = e.message; else toast(e.message); } }, 700); }
 function savePrices(){ clearTimeout(priceT); priceT = setTimeout(async () => { const st = $('#price-state'); try { const r = await put('/api/settings/catalog', {catalog:S.catalog}); S.catalog = r.catalog; if (st) st.textContent = 'Prices saved.'; } catch (e){ toast(e.message); } }, 700); }
 function savePerms(){ clearTimeout(permT); permT = setTimeout(async () => { try { const r = await put('/api/settings/perms', S.perms); S.perms = r.perms; toast('Manager access updated'); } catch (e){ toast(e.message); } }, 500); }
 
@@ -872,6 +906,7 @@ document.addEventListener('click', async e => {
     case 'pickcust': S.custId = +d.id; await act(async () => { S.data.cur = await api(`/api/customers/${enc(d.id)}`); render(); }); break;
     case 'clearq': S.q = ''; $('#q').value = ''; load(false); break;
     case 'account': accountModal(); break;
+    case 'logorm': clearTimeout(bizT); if (await act(async () => { const r = await put('/api/settings/biz', {...S.biz, logo:''}); S.biz = r.biz; return true; }, 'Logo removed')) rerender(); break;
     case 'logout': await post('/api/logout').catch(() => {}); S.me = null; draftCache = null; closeModal(); showAuth({}); break;
     case 'copy': try { await navigator.clipboard.writeText(d.text); toast('Copied'); } catch (_) { toast('Could not copy. Select the text and copy it.'); } break;
     /* wizard */
@@ -1062,6 +1097,17 @@ document.addEventListener('change', async e => {
   if (ds.useron){ const r = await act(() => post(`/api/users/${ds.useron}/active`, {active:t.checked}), t.checked ? 'Login turned on' : 'Login turned off'); if (!r) t.checked = !t.checked; return; }
   if (ds.wtog){ W()[ds.wtog] = t.checked; saveDraft(); return; }
   if (t.id === 'w-due' && !validDT(t.value)){ t.value = W().due; return; }
+  if (ds.logo && t.files && t.files[0]){
+    const file = t.files[0], st = $('#biz-state'); t.value = '';
+    if (st) st.textContent = 'Uploading logo…';
+    try {
+      const dataUrl = await prepLogo(file), up = await post('/api/uploads', {dataUrl});
+      clearTimeout(bizT);
+      const r = await put('/api/settings/biz', {...S.biz, logo:up.id}); S.biz = r.biz;
+      toast('Logo saved'); rerender();
+    } catch (x){ toast(x.message); if (st) st.textContent = x.message; }
+    return;
+  }
   if (ds.photo && t.files && t.files[0]){
     const slot = ds.photo, file = t.files[0];
     S.uploading[slot] = true; if (S.view === 'new') rerender();

@@ -234,3 +234,27 @@ test('WhatsApp messages: Hinglish by default, only the Super Admin edits them', 
   r = await owner.put('/api/settings/wa', {templates:{ready:''}}); assert.equal(r.data.wa.ready, S.WA_DEFAULTS_HI.ready, 'empty falls back to the default');
   r = await cl.get('/api/boot'); assert.equal(r.data.wa.ready, S.WA_DEFAULTS_HI.ready, 'everyone gets the saved messages');
 });
+
+test('studio logo and address: settings, login screen, invoices, public logo link', async () => {
+  const m2 = client(); await owner.post('/api/users', {name:'Staff Logo', login:'9822233344', password:'staff123'});
+  let r = await m2.post('/api/login', {login:'9822233344', password:'staff123'}); assert.equal(r.status, 200);
+  r = await m2.post('/api/uploads', {dataUrl:PNG}); const other = r.data.id; assert.match(other, /^[a-f0-9]{24}$/);
+  r = await owner.post('/api/uploads', {dataUrl:PNG}); const logo = r.data.id;
+  let raw = await fetch(base + '/logo/' + logo); assert.equal(raw.status, 404, 'an upload is not public until it is the logo');
+  const biz = {name:'The Detailing Studio', tag:'By Prime Automotive', addr:'Near Aura Kitchen, Kali Mata Enclave, GMS Road, Dehradun-248001', ph:'95574 44420', gstin:'05abjpz4806f1zh', gst:true, upi:'', logo};
+  r = await owner.put('/api/settings/biz', {...biz, logo:'0'.repeat(24)}); assert.equal(r.status, 400);
+  r = await m2.put('/api/settings/biz', biz); assert.equal(r.status, 403);
+  r = await owner.put('/api/settings/biz', biz); assert.equal(r.status, 200);
+  assert.equal(r.data.biz.logo, logo); assert.equal(r.data.biz.tag, 'By Prime Automotive'); assert.equal(r.data.biz.gstin, '05ABJPZ4806F1ZH');
+  r = await anon.get('/api/session'); assert.equal(r.data.biz.logo, logo); assert.equal(r.data.biz.name, 'The Detailing Studio');
+  raw = await fetch(base + '/logo/' + logo); assert.equal(raw.status, 200); assert.equal(raw.headers.get('content-type'), 'image/png');
+  raw = await fetch(base + '/logo/' + other); assert.equal(raw.status, 404, 'other uploads stay private');
+  const inv = await D.one(`SELECT token FROM invoices WHERE doc LIKE '%"gst":true%' LIMIT 1`); assert.ok(inv);
+  const html = await (await fetch(base + '/i/' + inv.token)).text();
+  assert.ok(html.includes(`<img class="pv-logo" src="/logo/${logo}"`)); assert.match(html, /By Prime Automotive/); assert.match(html, /Kali Mata Enclave/); assert.match(html, /GSTIN 05ABJPZ4806F1ZH/);
+  const job = await D.one('SELECT token FROM jobs LIMIT 1');
+  const jhtml = await (await fetch(base + '/j/' + job.token)).text();
+  assert.ok(jhtml.includes(`/logo/${logo}`)); assert.match(jhtml, /Dehradun-248001/);
+  r = await owner.put('/api/settings/biz', {...biz, logo:''}); assert.equal(r.data.biz.logo, '');
+  raw = await fetch(base + '/logo/' + logo); assert.equal(raw.status, 404, 'a removed logo is no longer public');
+});

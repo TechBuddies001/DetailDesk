@@ -64,7 +64,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS uploads (id CHAR(24) NOT NULL PRIMARY KEY, mime VARCHAR(20) NOT NULL, bytes INT NOT NULL, bin MEDIUMBLOB NOT NULL, created VARCHAR(16) NOT NULL, user_id INT NULL) ${T}`
 ];
 const DEFAULTS = {
-  biz:{name:'My Car Care Studio', addr:'', ph:'', gstin:'', gst:true, upi:''},
+  biz:{name:'My Car Care Studio', tag:'', addr:'', ph:'', gstin:'', gst:true, upi:'', logo:''},
   perms:{sales:false, cancel:false, disc:10},
   catalog:S.CATALOG0,
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],

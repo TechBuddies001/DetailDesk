@@ -207,7 +207,7 @@ app.get('/healthz', async (req, res) => {
   if (!dbReady) return res.status(503).json({ok:false, error:dbError});
   await one('SELECT 1 AS ok'); res.json({ok:true});
 });
-app.use(['/api', '/i', '/j'], (req, res, next) => dbReady ? next() : res.status(503).json({error:dbError}));
+app.use(['/api', '/i', '/j', '/logo'], (req, res, next) => dbReady ? next() : res.status(503).json({error:dbError}));
 
 app.use(express.json({limit:'8mb'}));
 // Same-origin check for state-changing API calls (cookies are SameSite=Lax; this blocks cross-site posts too).
@@ -221,7 +221,7 @@ app.use('/api', (req, res, next) => {
 });
 
 /* ---------- auth (no login needed) ---------- */
-app.get('/api/session', async (req, res) => res.json({user:await A.currentUser(req), setupNeeded:(await userCount()) === 0, biz:{name:(await getKV('biz', {})).name || ''}}));
+app.get('/api/session', async (req, res) => { const biz = await getKV('biz', {}); res.json({user:await A.currentUser(req), setupNeeded:(await userCount()) === 0, biz:{name:biz.name || '', logo:biz.logo || ''}}); });
 app.post('/api/setup', async (req, res) => {
   const b = obj(req.body);
   const bizName = str(b.bizName, 80, 'Business name'); if (!bizName) fail('Enter the business name');
@@ -257,6 +257,14 @@ app.post('/api/logout', async (req, res) => { await A.endSession(req, res); res.
 const pubPage = (title, biz, inner) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${S.esc(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/styles.css"></head><body class="pub"><main class="pub-main">${inner}</main><p class="pub-foot">${S.esc(biz.name)}${biz.ph ? ' · ' + S.esc(biz.ph) : ''}</p></body></html>`;
+// The studio logo is public (login screen, customer invoice links). Only the current logo is served, never other uploads.
+app.get('/logo/:id', async (req, res) => {
+  const id = String(req.params.id), biz = await getKV('biz', {});
+  const u = /^[a-f0-9]{24}$/.test(id) && biz.logo === id && await one('SELECT mime, bin FROM uploads WHERE id = ?', [id]);
+  if (!u) return res.status(404).send('Logo not found');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.type(u.mime).send(u.bin);
+});
 app.get('/i/:token', async (req, res) => {
   const v = await invFromRow(await one('SELECT * FROM invoices WHERE token = ?', [String(req.params.token)]));
   if (!v) return res.status(404).send('Invoice not found');
@@ -414,7 +422,9 @@ app.put('/api/settings/biz', adminOnly, async (req, res) => {
   const gstin = str(b.gstin, 15, 'GSTIN').toUpperCase();
   if (gstin && !/^\d{2}[A-Z0-9]{13}$/.test(gstin)) fail('GSTIN should be 15 characters, like 27ABCDE1234F1Z5');
   const name = str(b.name, 80, 'Business name'); if (!name) fail('Enter the business name');
-  await setKV('biz', {name, addr:str(b.addr, 200, 'Address'), ph:str(b.ph, 20, 'Phone'), gstin, gst:bool(b.gst), upi});
+  const logo = str(b.logo, 24, 'Logo');
+  if (logo && !(await validUpload(logo))) fail('Upload the logo again');
+  await setKV('biz', {name, tag:str(b.tag, 80, 'Line under the name'), addr:str(b.addr, 200, 'Address'), ph:str(b.ph, 20, 'Phone'), gstin, gst:bool(b.gst), upi, logo});
   res.json({ok:true, biz:await getKV('biz')});
 });
 app.put('/api/settings/perms', adminOnly, async (req, res) => {

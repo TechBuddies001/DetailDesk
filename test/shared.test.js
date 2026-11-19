@@ -28,3 +28,13 @@ test('every default message only uses words that exist for it', () => {
     }
   }
 });
+
+test('papers: logo, line under the name and address in the header', () => {
+  const biz = {name:'The Detailing Studio', tag:'By Prime Automotive', addr:'GMS Road, Dehradun', ph:'95574 44420', gstin:'05ABJPZ4806F1ZH', logo:'a'.repeat(24)};
+  const v = {no:'INV/26-27/0001', date:'2026-11-19T10:00', gst:true, cust:'A', ph:'9876500000', car:'Car', reg:'UK 07 AB 1234', lines:[{name:'Wash', sac:'998714', amt:1000}], disc:0, pays:[], warr:[]};
+  let h = S.invPaper(v, biz, '', []);
+  assert.ok(h.includes(`src="/logo/${'a'.repeat(24)}"`)); assert.ok(h.includes('By Prime Automotive')); assert.ok(h.includes('GMS Road, Dehradun')); assert.ok(h.includes('GSTIN 05ABJPZ4806F1ZH'));
+  h = S.invPaper({...v, gst:false}, {...biz, logo:'', tag:''}, '', []);
+  assert.ok(!h.includes('/logo/')); assert.ok(h.includes('<svg')); assert.ok(!h.includes('GSTIN')); assert.ok(!h.includes('pv-tag'));
+  assert.equal(S.logoUrl({logo:'../x'}), '', 'only real upload ids make a logo link');
+});

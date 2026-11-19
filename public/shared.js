@@ -190,12 +190,18 @@ function suggestDue(svcs, cat){
 const DEFAULT_TERMS = ['Please check the car at delivery. Claims after delivery are not accepted.', 'Warranty as shown above. Keep this invoice.'];
 const FIXED_CATS = ['PPF', 'Coating']; // PPF and coating details depend on these two names
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1A1A1A"/><path d="M16 5.5c4.2 5.6 7.2 9.3 7.2 12.9a7.2 7.2 0 0 1-14.4 0c0-3.6 3-7.3 7.2-12.9z" fill="#FFFFFF"/></svg>`;
+const logoUrl = b => b && /^[a-f0-9]{24}$/.test(b.logo || '') ? `/logo/${b.logo}` : '';
+// Studio name block on papers: uploaded logo (or the plain mark), name, the line under the name, then the given lines.
+function paperBrand(b, lines){
+  const u = logoUrl(b);
+  return `<div class="pv-brand">${u ? `<img class="pv-logo" src="${u}" alt="">` : LOGO}<div><b>${esc(b.name)}</b>${b.tag ? `<div class="pv-tag">${esc(b.tag)}</div>` : ''}${lines.filter(Boolean).map(x => `<div>${x}</div>`).join('')}</div></div>`;
+}
 function invPaper(v, biz, qr, terms){
   const tl = Array.isArray(terms) && terms.length ? terms : DEFAULT_TERMS;
   const t = invTot(v), paid = paidOf(v), bal = balOf(v), b = biz;
   return `<div class="paper">
     ${v.cancelled ? '<div class="stamp void">CANCELLED</div>' : bal <= 0 ? '<div class="stamp">PAID</div>' : ''}
-    <div class="pv-head"><div class="pv-brand">${LOGO}<div><b>${esc(b.name)}</b><br>${esc(b.addr)}<br>Ph ${esc(b.ph)}${v.gst && b.gstin ? ` · GSTIN ${esc(b.gstin)}` : ''}</div></div>
+    <div class="pv-head">${paperBrand(b, [esc(b.addr), b.ph ? `Ph ${esc(b.ph)}` : '', v.gst && b.gstin ? `<span class="pv-gstin">GSTIN ${esc(b.gstin)}</span>` : ''])}
       <div class="pv-title"><h2>${v.gst ? 'TAX INVOICE' : 'INVOICE'}</h2><div class="mono">${esc(v.no)}</div><div>Date: ${esc(fDY(v.date))}</div></div></div>
     <div class="pv-parties"><div><span class="pv-l">Bill to</span><b>${esc(v.cust)}</b><br>+91 ${esc(v.ph)}</div>
       <div><span class="pv-l">Vehicle</span><b>${esc(v.car)}</b> · ${esc(v.reg)}<br>${v.odo ? esc(v.odo) + ' km' : ''}${v.jobId ? `${v.odo ? ' · ' : ''}Job card ${esc(v.jobId)}` : ''}</div></div>
@@ -224,7 +230,7 @@ function invPaper(v, biz, qr, terms){
 function jobPaper(j, biz, qr, sigUrl){
   const b = biz, marks = Object.entries(j.dmg || {}).filter(([p, d]) => PANEL[p] && DMG[d]);
   return `<div class="paper a5">
-    <div class="pv-head"><div class="pv-brand">${LOGO}<div><b>${esc(b.name)}</b><br>Ph ${esc(b.ph)}</div></div><div class="pv-title"><h2>JOB CARD</h2><div class="mono">${esc(j.id)}</div><div>${esc(fDY(j.in))}</div></div></div>
+    <div class="pv-head">${paperBrand(b, [esc(b.addr), b.ph ? `Ph ${esc(b.ph)}` : ''])}<div class="pv-title"><h2>JOB CARD</h2><div class="mono">${esc(j.id)}</div><div>${esc(fDY(j.in))}</div></div></div>
     <div class="pv-parties"><div><span class="pv-l">Customer</span><b>${esc(j.cust)}</b><br>+91 ${esc(j.ph)}</div><div><span class="pv-l">Vehicle</span><b>${esc(j.car)}</b><br>${esc(j.reg)}${j.color ? ' · ' + esc(j.color) : ''}<br>${j.odo ? esc(j.odo) + ' km · ' : ''}fuel ${esc(j.fuel)}</div></div>
     <div class="pv-2">
       <div><span class="pv-l">Work to do</span>${j.lines.map(l => `<div>☐ ${esc(l.name)}</div>`).join('')}${j.ppf ? `<div style="margin-top:4px">PPF: ${esc(coverLabel(j.svcs, j.panels))}, ${esc(j.ppf.finish)}${j.ppf.film ? ', ' + esc(j.ppf.film) : ''}</div>` : ''}${j.coat ? `<div>Coating: ${j.coat.product ? esc(j.coat.product) + ', ' : ''}${+j.coat.layers} layer</div>` : ''}</div>
@@ -284,5 +290,5 @@ function fillTemplate(tpl, vars){
 if (typeof module !== 'undefined' && module.exports){
   module.exports = {esc, inr, f2, digits, fmtPh, norm, hit, pad, MON, isoD, isoDT, parseDT, validDT, todayS, isToday, fD, fDY, fDT, fTime, fyOf,
     SEGS, SEGF, CATS, CATALOG0, COVER, PANELS, PANEL, FRONT_KIT, DMG, BEL, SLOTS, TERMS, PAY_MODES,
-    DEFAULT_TERMS, FIXED_CATS, WA_KINDS, WA_COMMON, WA_DEFAULTS_HI, WA_DEFAULTS_EN, fillTemplate, svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, invPaper, jobPaper};
+    DEFAULT_TERMS, FIXED_CATS, WA_KINDS, WA_COMMON, WA_DEFAULTS_HI, WA_DEFAULTS_EN, fillTemplate, svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, logoUrl, invPaper, jobPaper};
 }

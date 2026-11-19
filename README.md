@@ -25,7 +25,7 @@ It has three kinds of login:
 - **Payments:** UPI, cash, card or bank. Part payments are allowed. The advance is adjusted automatically.
 - **Customers:** cars, visits, history and warranties.
 - **Owner-only Settings:**
-  - Business details and GST on/off.
+  - Business details and GST on/off: logo, name, a line under the name (like "By Prime Automotive"), address, phone, GSTIN and UPI ID. The logo shows on invoices, job cards, the login screen and the menu.
   - Price list.
   - Bays and team.
   - Manager logins.
@@ -139,4 +139,4 @@ TEST_DB_HOST=127.0.0.1 TEST_DB_PORT=3306 TEST_DB_USER=root TEST_DB_PASSWORD=... 
 ## Later (not built yet)
 
 - WhatsApp Business API for automatic sending and reminders. This needs a Meta business account.
-- Editing a job card after it's created, inventory/film stock, reports, and more than one branch.
+- Inventory/film stock, reports, and more than one branch.
