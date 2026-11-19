@@ -258,3 +258,12 @@ test('studio logo and address: settings, login screen, invoices, public logo lin
   r = await owner.put('/api/settings/biz', {...biz, logo:''}); assert.equal(r.data.biz.logo, '');
   raw = await fetch(base + '/logo/' + logo); assert.equal(raw.status, 404, 'a removed logo is no longer public');
 });
+
+test('page asks for versioned app files, so an update is never stuck in the browser cache', async () => {
+  for (const u of ['/', '/index.html']){
+    const r = await fetch(base + u), html = await r.text();
+    assert.equal(r.status, 200); assert.equal(r.headers.get('cache-control'), 'no-cache');
+    assert.match(html, /<script src="\/app\.js\?v=[a-f0-9]{10}"><\/script>/); assert.match(html, /src="\/shared\.js\?v=/); assert.match(html, /href="\/styles\.css\?v=/);
+  }
+  const js = await fetch(base + '/app.js?v=x'); assert.equal(js.status, 200);
+});

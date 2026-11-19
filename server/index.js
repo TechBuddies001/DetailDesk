@@ -2,6 +2,7 @@
 process.env.TZ = process.env.TZ || 'Asia/Kolkata';
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const express = require('express');
 const QR = require('qrcode');
 const S = require('../public/shared.js');
@@ -254,9 +255,12 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', async (req, res) => { await A.endSession(req, res); res.json({ok:true}); });
 
 /* ---------- public pages for customers (no login, unguessable token) ---------- */
+const PUB = path.join(__dirname, '..', 'public');
+const ASSET_V = crypto.createHash('sha1').update(['app.js', 'shared.js', 'styles.css'].map(f => fs.readFileSync(path.join(PUB, f))).join('')).digest('hex').slice(0, 10);
+const INDEX_HTML = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8').replace(/(src|href)="\/(app\.js|shared\.js|styles\.css)"/g, `$1="/$2?v=${ASSET_V}"`);
 const pubPage = (title, biz, inner) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${S.esc(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/styles.css"></head><body class="pub"><main class="pub-main">${inner}</main><p class="pub-foot">${S.esc(biz.name)}${biz.ph ? ' · ' + S.esc(biz.ph) : ''}</p></body></html>`;
+<link rel="stylesheet" href="/styles.css?v=${ASSET_V}"></head><body class="pub"><main class="pub-main">${inner}</main><p class="pub-foot">${S.esc(biz.name)}${biz.ph ? ' · ' + S.esc(biz.ph) : ''}</p></body></html>`;
 // The studio logo is public (login screen, customer invoice links). Only the current logo is served, never other uploads.
 app.get('/logo/:id', async (req, res) => {
   const id = String(req.params.id), biz = await getKV('biz', {});
@@ -609,6 +613,12 @@ app.put('/api/customers/:id', superOnly, async (req, res) => {
 app.use('/api', (req, res) => res.status(404).json({error:'Not found'}));
 
 /* ---------- static app ---------- */
+// Hostinger's CDN serves .js/.css itself without no-cache, so browsers can keep an old copy after an update.
+// The page asks for /app.js?v=<hash of the files>, so every update loads fresh files.
+app.get(['/', '/index.html'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(INDEX_HTML);
+});
 app.use(express.static(path.join(__dirname, '..', 'public'), {extensions:['html'], setHeaders:res => res.setHeader('Cache-Control', 'no-cache')}));
 
 /* ---------- errors ---------- */
