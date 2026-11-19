@@ -1,55 +1,68 @@
-// SQLite storage. One file (data/detaildesk.db) holds everything; photos live in data/uploads/.
-const path = require('path');
-const fs = require('fs');
-const Database = require('better-sqlite3');
+// MySQL / MariaDB storage (works with Hostinger "MySQL databases").
+// Everything lives in the database, photos and signatures too, so a redeploy never loses data.
+const mysql = require('mysql2/promise');
 const S = require('../public/shared.js');
 
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data'));
-const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
-fs.mkdirSync(UPLOAD_DIR, {recursive:true});
+function config(){
+  if (process.env.DATABASE_URL){
+    const u = new URL(process.env.DATABASE_URL);
+    return {host:u.hostname, port:+u.port || 3306, user:decodeURIComponent(u.username), password:decodeURIComponent(u.password), database:decodeURIComponent(u.pathname.replace(/^\//, ''))};
+  }
+  return {host:process.env.DB_HOST || '127.0.0.1', port:+process.env.DB_PORT || 3306, user:process.env.DB_USER || 'root', password:process.env.DB_PASSWORD || '', database:process.env.DB_NAME || 'detaildesk'};
+}
+const cfg = config();
+if (cfg.host === 'localhost') cfg.host = '127.0.0.1'; // Hostinger: "localhost" resolves to IPv6 ::1, which MySQL there refuses
+const pool = mysql.createPool({...cfg, charset:'utf8mb4', connectionLimit:+process.env.DB_POOL || 5, waitForConnections:true, decimalNumbers:true, supportBigNumbers:true, dateStrings:true, enableKeepAlive:true, connectTimeout:15000});
+// READ COMMITTED: fewer gap locks, so people saving at the same time don't block each other.
+pool.pool.on('connection', conn => conn.query('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED'));
 
-const db = new Database(path.join(DATA_DIR, 'detaildesk.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.pragma('busy_timeout = 5000');
+const all = async (sql, p = [], c = pool) => { const [rows] = await c.query(sql, p); return rows; };
+const one = async (sql, p = [], c = pool) => (await all(sql, p, c))[0] || null;
+const run = async (sql, p = [], c = pool) => { const [r] = await c.query(sql, p); return r; };
+// Runs fn inside a transaction; retries a few times if MySQL reports a deadlock (normal under load).
+async function tx(fn, tries = 5){
+  for (let i = 1; ; i++){
+    const c = await pool.getConnection();
+    try { await c.beginTransaction(); const r = await fn(c); await c.commit(); return r; }
+    catch (e){
+      try { await c.rollback(); } catch (_) {}
+      if ((e.code === 'ER_LOCK_DEADLOCK' || e.code === 'ER_LOCK_WAIT_TIMEOUT') && i < tries){ await new Promise(r => setTimeout(r, 15 * i + Math.random() * 40)); continue; }
+      throw e;
+    }
+    finally { c.release(); }
+  }
+}
+// Gap-free running numbers (job cards, invoice series per financial year), safe with several users at once.
+async function nextNum(c, key){
+  await c.query('INSERT INTO counters (k, n) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)', [key]);
+  const [[r]] = await c.query('SELECT LAST_INSERT_ID() AS n');
+  return Number(r.n);
+}
+const peekNum = async key => { const r = await one('SELECT n FROM counters WHERE k = ?', [key]); return r ? Number(r.n) : 0; };
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, login TEXT NOT NULL UNIQUE, pass TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','manager')), active INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '', created TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS vehicles (
-  id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id), reg TEXT NOT NULL, reg_key TEXT NOT NULL UNIQUE,
-  model TEXT NOT NULL, color TEXT NOT NULL DEFAULT '', seg INTEGER);
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY, seq INTEGER NOT NULL UNIQUE, customer_id INTEGER NOT NULL REFERENCES customers(id), vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
-  status TEXT NOT NULL CHECK (status IN ('work','ready','done')), created TEXT NOT NULL, token TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, created);
-CREATE INDEX IF NOT EXISTS jobs_customer ON jobs(customer_id);
-CREATE TABLE IF NOT EXISTS invoices (
-  no TEXT PRIMARY KEY, fy TEXT NOT NULL, seq INTEGER NOT NULL, date TEXT NOT NULL, job_id TEXT REFERENCES jobs(id), customer_id INTEGER NOT NULL REFERENCES customers(id),
-  token TEXT NOT NULL UNIQUE, cancelled INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL, doc TEXT NOT NULL, UNIQUE (fy, seq));
-CREATE INDEX IF NOT EXISTS invoices_date ON invoices(date);
-CREATE INDEX IF NOT EXISTS invoices_customer ON invoices(customer_id);
-CREATE TABLE IF NOT EXISTS payments (
-  id INTEGER PRIMARY KEY, job_id TEXT REFERENCES jobs(id), invoice_no TEXT REFERENCES invoices(no), amt INTEGER NOT NULL CHECK (amt > 0),
-  mode TEXT NOT NULL, at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', user_id INTEGER);
-CREATE INDEX IF NOT EXISTS payments_invoice ON payments(invoice_no);
-CREATE INDEX IF NOT EXISTS payments_job ON payments(job_id);
-CREATE INDEX IF NOT EXISTS payments_at ON payments(at);
-CREATE TABLE IF NOT EXISTS job_log (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), at TEXT NOT NULL, text TEXT NOT NULL, user_id INTEGER);
-CREATE INDEX IF NOT EXISTS job_log_job ON job_log(job_id);
-CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, mime TEXT NOT NULL, bytes INTEGER NOT NULL, created TEXT NOT NULL, user_id INTEGER);
-`);
-
-/* ---------- key/value settings ---------- */
-const kvGet = db.prepare('SELECT v FROM kv WHERE k = ?');
-const kvSet = db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v');
-function getKV(k, fallback){ const r = kvGet.get(k); if (!r) return fallback; try { return JSON.parse(r.v); } catch (_) { return fallback; } }
-function setKV(k, v){ kvSet.run(k, JSON.stringify(v)); }
-
+const T = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS kv (k VARCHAR(64) NOT NULL PRIMARY KEY, v MEDIUMTEXT NOT NULL) ${T}`,
+  `CREATE TABLE IF NOT EXISTS counters (k VARCHAR(32) NOT NULL PRIMARY KEY, n INT NOT NULL) ${T}`,
+  `CREATE TABLE IF NOT EXISTS users (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, login VARCHAR(60) NOT NULL UNIQUE, pass VARCHAR(255) NOT NULL,
+    role VARCHAR(10) NOT NULL, active TINYINT NOT NULL DEFAULT 1, created VARCHAR(16) NOT NULL) ${T}`,
+  `CREATE TABLE IF NOT EXISTS sessions (token CHAR(64) NOT NULL PRIMARY KEY, user_id INT NOT NULL, expires BIGINT NOT NULL, KEY sessions_user (user_id),
+    CONSTRAINT sessions_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ${T}`,
+  `CREATE TABLE IF NOT EXISTS customers (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, phone CHAR(10) NOT NULL UNIQUE, email VARCHAR(120) NOT NULL DEFAULT '', created VARCHAR(16) NOT NULL) ${T}`,
+  `CREATE TABLE IF NOT EXISTS vehicles (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, reg VARCHAR(20) NOT NULL, reg_key VARCHAR(20) NOT NULL UNIQUE,
+    model VARCHAR(60) NOT NULL, color VARCHAR(30) NOT NULL DEFAULT '', seg TINYINT NULL, KEY vehicles_customer (customer_id),
+    CONSTRAINT vehicles_customer_fk FOREIGN KEY (customer_id) REFERENCES customers(id)) ${T}`,
+  `CREATE TABLE IF NOT EXISTS jobs (id VARCHAR(16) NOT NULL PRIMARY KEY, seq INT NOT NULL UNIQUE, customer_id INT NOT NULL, vehicle_id INT NOT NULL, status VARCHAR(8) NOT NULL,
+    created VARCHAR(16) NOT NULL, token CHAR(24) NOT NULL UNIQUE, doc MEDIUMTEXT NOT NULL, KEY jobs_status (status, created), KEY jobs_customer (customer_id),
+    CONSTRAINT jobs_customer_fk FOREIGN KEY (customer_id) REFERENCES customers(id), CONSTRAINT jobs_vehicle_fk FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)) ${T}`,
+  `CREATE TABLE IF NOT EXISTS invoices (inv_no VARCHAR(24) NOT NULL PRIMARY KEY, fy CHAR(5) NOT NULL, seq INT NOT NULL, inv_date VARCHAR(16) NOT NULL, job_id VARCHAR(16) NULL,
+    customer_id INT NOT NULL, token CHAR(24) NOT NULL UNIQUE, cancelled TINYINT NOT NULL DEFAULT 0, total INT NOT NULL, doc MEDIUMTEXT NOT NULL,
+    UNIQUE KEY invoices_series (fy, seq), KEY invoices_customer (customer_id), KEY invoices_date (inv_date), KEY invoices_job (job_id)) ${T}`,
+  `CREATE TABLE IF NOT EXISTS payments (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, job_id VARCHAR(16) NULL, invoice_no VARCHAR(24) NULL, amt INT NOT NULL, pay_mode VARCHAR(8) NOT NULL,
+    paid_at VARCHAR(16) NOT NULL, note VARCHAR(40) NOT NULL DEFAULT '', user_id INT NULL, KEY payments_invoice (invoice_no), KEY payments_job (job_id), KEY payments_at (paid_at)) ${T}`,
+  `CREATE TABLE IF NOT EXISTS job_log (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, job_id VARCHAR(16) NOT NULL, at_time VARCHAR(16) NOT NULL, msg VARCHAR(255) NOT NULL, user_id INT NULL, KEY job_log_job (job_id)) ${T}`,
+  `CREATE TABLE IF NOT EXISTS uploads (id CHAR(24) NOT NULL PRIMARY KEY, mime VARCHAR(20) NOT NULL, bytes INT NOT NULL, bin MEDIUMBLOB NOT NULL, created VARCHAR(16) NOT NULL, user_id INT NULL) ${T}`
+];
 const DEFAULTS = {
   biz:{name:'My Car Care Studio', addr:'', ph:'', gstin:'', gst:true, upi:''},
   perms:{sales:false, cancel:false, disc:10},
@@ -57,24 +70,33 @@ const DEFAULTS = {
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],
   staff:[]
 };
-for (const [k, v] of Object.entries(DEFAULTS)) if (!kvGet.get(k)) setKV(k, v);
+async function init(){
+  for (const s of SCHEMA) await pool.query(s);
+  for (const [k, v] of Object.entries(DEFAULTS)) await pool.query('INSERT IGNORE INTO kv (k, v) VALUES (?, ?)', [k, JSON.stringify(v)]);
+}
 
-const settings = () => ({biz:getKV('biz', DEFAULTS.biz), perms:getKV('perms', DEFAULTS.perms), catalog:getKV('catalog', DEFAULTS.catalog), bays:getKV('bays', DEFAULTS.bays), staff:getKV('staff', DEFAULTS.staff)});
+/* ---------- settings ---------- */
+async function getKV(k, fallback, c = pool){ const r = await one('SELECT v FROM kv WHERE k = ?', [k], c); if (!r) return fallback; try { return JSON.parse(r.v); } catch (_) { return fallback; } }
+async function setKV(k, v, c = pool){ const s = JSON.stringify(v); await run('INSERT INTO kv (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = ?', [k, s, s], c); }
+async function settings(c = pool){
+  const rows = await all('SELECT k, v FROM kv WHERE k IN (?)', [Object.keys(DEFAULTS)], c), m = {};
+  rows.forEach(r => { try { m[r.k] = JSON.parse(r.v); } catch (_) {} });
+  return Object.fromEntries(Object.keys(DEFAULTS).map(k => [k, m[k] ?? DEFAULTS[k]]));
+}
 
-/* ---------- row <-> object ---------- */
+/* ---------- row -> object ---------- */
 function jobFromRow(r){
   if (!r) return null;
   const j = JSON.parse(r.doc);
   j.id = r.id; j.status = r.status; j.in = r.created; j.token = r.token; j.customerId = r.customer_id;
   return j;
 }
-const paysForInv = db.prepare('SELECT amt, mode, at AS d, note FROM payments WHERE invoice_no = ? ORDER BY at, id');
-function invFromRow(r){
+async function invFromRow(r, c = pool){
   if (!r) return null;
   const v = JSON.parse(r.doc);
-  v.no = r.no; v.date = r.date; v.jobId = r.job_id; v.token = r.token; v.cancelled = !!r.cancelled; v.customerId = r.customer_id;
-  v.pays = paysForInv.all(r.no);
+  v.no = r.inv_no; v.date = r.inv_date; v.jobId = r.job_id; v.token = r.token; v.cancelled = !!r.cancelled; v.customerId = r.customer_id;
+  v.pays = await all('SELECT amt, pay_mode AS mode, paid_at AS d, note FROM payments WHERE invoice_no = ? ORDER BY paid_at, id', [r.inv_no], c);
   return v;
 }
 
-module.exports = {db, DATA_DIR, UPLOAD_DIR, getKV, setKV, settings, jobFromRow, invFromRow};
+module.exports = {pool, all, one, run, tx, nextNum, peekNum, init, getKV, setKV, settings, jobFromRow, invFromRow, DEFAULTS};

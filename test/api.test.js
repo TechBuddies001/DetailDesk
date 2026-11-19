@@ -1,17 +1,27 @@
-// End-to-end API tests: run with `npm test`. Uses a fresh temporary database each run.
+// End-to-end API tests: `npm test`. Needs a MySQL/MariaDB server; each run uses a fresh throwaway database.
+// Point it at a test server with TEST_DB_HOST / TEST_DB_PORT / TEST_DB_USER / TEST_DB_PASSWORD (default 127.0.0.1:3306 root).
 const {test, before, after} = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-
-process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'detaildesk-test-'));
-const {app} = require('../server/index.js');
+const mysql = require('mysql2/promise');
 const S = require('../public/shared.js');
 
+const T = {host:process.env.TEST_DB_HOST || '127.0.0.1', port:+(process.env.TEST_DB_PORT || 3306), user:process.env.TEST_DB_USER || 'root', password:process.env.TEST_DB_PASSWORD || ''};
+const DB_NAME = `dd_test_${Date.now()}_${process.pid}`;
+Object.assign(process.env, {DB_HOST:T.host, DB_PORT:String(T.port), DB_USER:T.user, DB_PASSWORD:T.password, DB_NAME, DD_NO_RETRY:'1'});
+let app, D, admin;
 let server, base;
-before(() => new Promise(r => { server = app.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; r(); }); }));
-after(() => { server.close(); fs.rmSync(process.env.DATA_DIR, {recursive:true, force:true}); });
+before(async () => {
+  admin = await mysql.createConnection(T);
+  await admin.query(`CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  ({app} = require('../server/index.js')); D = require('../server/db');
+  await require('../server/index.js').ready;
+  await new Promise(r => { server = app.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; r(); }); });
+});
+after(async () => {
+  if (server) server.close();
+  if (D) await D.pool.end();
+  if (admin){ await admin.query(`DROP DATABASE IF EXISTS \`${DB_NAME}\``); await admin.end(); }
+});
 
 function client(){
   let cookie = '';
@@ -123,4 +133,22 @@ test('settings guard rails', async () => {
   r = await owner.post('/api/users/2/active', {active:false}); assert.equal(r.status, 200);
   r = await mgr.get('/api/home'); assert.equal(r.status, 401, 'turned-off login is logged out');
   r = await fetch(base + '/api/logout', {method:'POST', headers:{'Content-Type':'application/json', Origin:'https://evil.example'}, body:'{}'}); assert.equal(r.status, 403);
+});
+
+test('several people saving at once: unique numbers, no overpayment', async () => {
+  const mk = i => owner.post('/api/jobs', wizard({f:{...wizard().f, mob:`900000000${i}`, name:`Parallel ${i}`, reg:`MH 01 PX 000${i}`}, svcs:['wash'], disc:0, adv:0, sig:null, bay:'', team:[]}));
+  const made = await Promise.all([1, 2, 3, 4, 5].map(mk));
+  made.forEach(r => assert.equal(r.status, 200, JSON.stringify(r.data)));
+  const ids = made.map(r => r.data.id);
+  assert.equal(new Set(ids).size, 5);
+  await Promise.all(ids.map(id => owner.post(`/api/jobs/${id}/ready`)));
+  const invs = await Promise.all(ids.map(id => owner.post(`/api/jobs/${id}/invoice`)));
+  const nos = invs.map(r => r.data.no); assert.equal(new Set(nos).size, 5, nos.join());
+  const no = nos[0], total = Math.round(1200 * 1.18); // SUV wash price was set to 1200 in the settings test
+  const pays = await Promise.all([owner.post('/api/invoice/pay', {no, amt:total, mode:'UPI'}), owner.post('/api/invoice/pay', {no, amt:total, mode:'Cash'})]);
+  const r = await owner.get('/api/invoice?no=' + encodeURIComponent(no));
+  assert.equal(S.invTot(r.data.inv).total, total);
+  assert.equal(S.paidOf(r.data.inv), total, 'never collects more than the invoice total: ' + pays.map(p => p.status).join());
+  assert.deepEqual(pays.map(p => p.status).sort(), [200, 400], 'second payer is told it is already paid');
+  assert.equal(r.data.inv.lines[0].name, 'Foam wash + wax'); assert.equal(r.data.inv.ph, '90000 00001'.replace('0 00001', `0 0000${ids.indexOf(r.data.inv.jobId) + 1}`));
 });
