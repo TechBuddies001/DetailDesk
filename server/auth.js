@@ -56,9 +56,14 @@ async function requireUser(req, res, next){
   if (!u) return res.status(401).json({error:'Please log in again.'});
   req.user = u; next();
 }
+// Owner-level pages (Settings etc.): the studio Owner (admin) and the Super Admin.
 function requireAdmin(req, res, next){
-  if (!req.user || req.user.role !== 'admin') return res.status(403).json({error:'Only the owner (Admin) can do this.'});
+  if (!req.user || !['admin', 'superadmin'].includes(req.user.role)) return res.status(403).json({error:'Only the owner (Admin) can do this.'});
+  next();
+}
+function requireSuper(req, res, next){
+  if (!req.user || req.user.role !== 'superadmin') return res.status(403).json({error:'Only the Super Admin can do this.'});
   next();
 }
 
-module.exports = {hashPassword, checkPassword, startSession, endSession, currentUser, requireUser, requireAdmin, loginBlocked, loginFailed, loginOk, delUserSessions};
+module.exports = {hashPassword, checkPassword, startSession, endSession, currentUser, requireUser, requireAdmin, requireSuper, loginBlocked, loginFailed, loginOk, delUserSessions};

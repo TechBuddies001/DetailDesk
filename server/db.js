@@ -68,11 +68,18 @@ const DEFAULTS = {
   perms:{sales:false, cancel:false, disc:10},
   catalog:S.CATALOG0,
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],
-  staff:[]
+  staff:[],
+  invoice:{prefix:'INV', terms:S.DEFAULT_TERMS},
+  cats:S.CATS.slice(1)
 };
 async function init(){
   for (const s of SCHEMA) await pool.query(s);
   for (const [k, v] of Object.entries(DEFAULTS)) await pool.query('INSERT IGNORE INTO kv (k, v) VALUES (?, ?)', [k, JSON.stringify(v)]);
+  // One-time upgrade: the first owner login becomes the Super Admin if there isn't one yet.
+  if (!(await one("SELECT id FROM users WHERE role = 'superadmin' LIMIT 1"))){
+    const a = await one("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
+    if (a) await run("UPDATE users SET role = 'superadmin' WHERE id = ?", [a.id]);
+  }
 }
 
 /* ---------- settings ---------- */

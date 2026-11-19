@@ -34,12 +34,13 @@ function cleanLogin(v){
   if (!/^[a-z0-9._@\-]{3,40}$/.test(s)) fail('Use your 10-digit mobile number or a username of 3 to 40 letters or numbers');
   return s;
 }
-const isAdmin = req => req.user.role === 'admin';
+const isAdmin = req => req.user.role === 'admin' || req.user.role === 'superadmin'; // owner-level
+const isSuper = req => req.user.role === 'superadmin';
 const perms = () => getKV('perms', {sales:false, cancel:false, disc:10});
 const canSales = async req => isAdmin(req) || !!(await perms()).sales;
 const canCancel = async req => isAdmin(req) || !!(await perms()).cancel;
 const discLimit = async req => isAdmin(req) ? 100 : Math.max(0, Math.min(100, +(await perms()).disc || 0));
-const whoName = u => u.role === 'manager' ? `${u.name} (Manager)` : u.name;
+const whoName = u => u.role === 'manager' ? `${u.name} (Manager)` : u.role === 'superadmin' ? `${u.name} (Super Admin)` : u.name;
 const publicUrl = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
 const baseUrl = req => publicUrl() || `${req.protocol}://${req.get('host')}`;
 const qrSvg = text => QR.toString(text, {type:'svg', margin:0, errorCorrectionLevel:'M'});
@@ -158,7 +159,8 @@ async function makeInvoice(user, id, opts = {}){
     const row = await one('SELECT * FROM jobs WHERE id = ? FOR UPDATE', [id], c), j = jobFromRow(row); if (!j) fail('Job card not found', 404);
     if (j.inv) fail('This job card already has an invoice');
     if (j.status !== 'ready') fail('Mark the car as ready before making the invoice');
-    const seq = await nextNum(c, `inv:${fy}`), no = `INV/${fy}/${pad4(seq)}`;
+    const prefix = ((await getKV('invoice', {}, c)) || {}).prefix || 'INV';
+    const seq = await nextNum(c, `inv:${fy}`), no = `${prefix}/${fy}/${pad4(seq)}`;
     const inv = {cust:j.cust, ph:j.ph, car:j.car, reg:j.reg, seg:j.seg, odo:j.odo, lines:j.lines, disc:j.disc, gst:j.gst, warr:S.warrOf(j, at)};
     await run('INSERT INTO invoices (inv_no, fy, seq, inv_date, job_id, customer_id, token, cancelled, total, doc) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
       [no, fy, seq, at, id, row.customer_id, token(12), S.totals(j.lines, j.disc, j.gst).total, JSON.stringify(inv)], c);
@@ -230,7 +232,7 @@ app.post('/api/setup', async (req, res) => {
     await c.query("INSERT INTO counters (k, n) VALUES ('setup', 0) ON DUPLICATE KEY UPDATE n = n");
     await c.query("SELECT n FROM counters WHERE k = 'setup' FOR UPDATE");
     if (Number((await one('SELECT COUNT(*) AS n FROM users', [], c)).n) > 0) fail('Setup is already done. Please log in.', 409);
-    const r = await run('INSERT INTO users (name, login, pass, role, active, created) VALUES (?, ?, ?, ?, 1, ?)', [name, login, A.hashPassword(pw), 'admin', now()], c);
+    const r = await run('INSERT INTO users (name, login, pass, role, active, created) VALUES (?, ?, ?, ?, 1, ?)', [name, login, A.hashPassword(pw), 'superadmin', now()], c);
     const biz = await getKV('biz', {}, c);
     await setKV('biz', {...biz, name:bizName, ph:/^\d{10}$/.test(login) ? S.fmtPh(login) : (biz.ph || '')}, c);
     return r.insertId;
@@ -261,7 +263,7 @@ app.get('/i/:token', async (req, res) => {
   const biz = await getKV('biz', {}), bal = S.balOf(v);
   const qr = bal > 0 && biz.upi ? await qrSvg(upiLink(biz, bal, v.no)) : '';
   res.setHeader('Cache-Control', 'no-store');
-  res.send(pubPage(`Invoice ${v.no}`, biz, `<div class="pub-bar no-print"><b>Invoice ${S.esc(v.no)}</b><span class="spacer"></span>${bal > 0 && biz.upi ? `<a class="btn pri" href="${S.esc(upiLink(biz, bal, v.no))}">Pay ${S.inr(bal)} by UPI</a>` : ''}<button class="btn" onclick="window.print()">Print / Save as PDF</button></div><div class="paper-wrap">${S.invPaper(v, biz, qr)}</div>`));
+  res.send(pubPage(`Invoice ${v.no}`, biz, `<div class="pub-bar no-print"><b>Invoice ${S.esc(v.no)}</b><span class="spacer"></span>${bal > 0 && biz.upi ? `<a class="btn pri" href="${S.esc(upiLink(biz, bal, v.no))}">Pay ${S.inr(bal)} by UPI</a>` : ''}<button class="btn" onclick="window.print()">Print / Save as PDF</button></div><div class="paper-wrap">${S.invPaper(v, biz, qr, (await getKV('invoice', {})).terms)}</div>`));
 });
 app.get('/j/:token', async (req, res) => {
   const j = jobFromRow(await one('SELECT * FROM jobs WHERE token = ?', [String(req.params.token)]));
@@ -273,7 +275,7 @@ app.get('/j/:token', async (req, res) => {
 
 /* ---------- everything below needs a login ---------- */
 app.use('/api', A.requireUser);
-const adminOnly = A.requireAdmin;
+const adminOnly = A.requireAdmin, superOnly = A.requireSuper;
 
 app.get('/api/boot', async (req, res) => res.json({me:req.user, ...(await settings())}));
 app.post('/api/me/password', async (req, res) => {
@@ -397,7 +399,7 @@ app.get('/api/customers/:id', async (req, res) => {
   const invs = await all(`${INV_WITH_PAID} WHERE i.customer_id = ? ORDER BY i.inv_date DESC`, [c.id]);
   const warr = []; jobs.filter(j => j.status === 'done').forEach(j => S.warrOf(j, j.doneAt || j.in).forEach(w => warr.push(w)));
   const out = {id:c.id, name:c.name, ph:S.fmtPh(c.phone), email:c.email, since:[c.created, ...jobs.map(j => j.in), ...invs.map(r => r.inv_date)].sort()[0],
-    cars:(await all('SELECT * FROM vehicles WHERE customer_id = ? ORDER BY id DESC', [c.id])).map(v => ({reg:v.reg, model:v.model, color:v.color, seg:v.seg})),
+    cars:(await all('SELECT * FROM vehicles WHERE customer_id = ? ORDER BY id DESC', [c.id])).map(v => ({id:v.id, reg:v.reg, model:v.model, color:v.color, seg:v.seg})),
     jobs:jobs.filter(j => !j.inv).map(j => ({id:j.id, status:j.status, in:j.in, names:j.lines.map(l => S.shortName(l.name)).join(', ')})),
     invs:invs.map(r => { const d = JSON.parse(r.doc); return {no:r.inv_no, date:r.inv_date, total:r.total, bal:r.cancelled ? 0 : r.total - Number(r.paid), cancelled:!!r.cancelled, names:d.lines.map(l => S.shortName(l.name)).join(', ')}; }),
     warr, visits:jobs.length + invs.filter(r => !r.job_id).length};
@@ -422,12 +424,12 @@ app.put('/api/settings/perms', adminOnly, async (req, res) => {
 });
 app.put('/api/settings/catalog', adminOnly, async (req, res) => {
   const list = arr(obj(req.body).catalog); if (!list.length) fail('The price list cannot be empty');
-  const ids = new Set();
+  const ids = new Set(), cats = await getKV('cats', S.CATS.slice(1));
   const clean = list.slice(0, 300).map(s => {
     s = obj(s);
     const id = str(s.id, 40, 'Service id'); if (!/^[a-z0-9-]+$/i.test(id) || ids.has(id)) fail('Bad service id'); ids.add(id);
     const name = str(s.name, 80, 'Service name'); if (!name) fail('Every service needs a name');
-    const cat = S.CATS.slice(1).includes(s.cat) ? s.cat : 'Wash & interior';
+    const cat = cats.includes(s.cat) ? s.cat : cats[cats.length - 1];
     const prices = arr(s.perSq || s.p).slice(0, 5).map(x => int(Math.round(+x || 0), 0, 10000000, `Price of ${name}`));
     while (prices.length < 5) prices.push(0);
     const o = {id, cat, name, dur:str(s.dur, 30, 'Duration'), hrs:Math.max(.5, Math.min(200, +s.hrs || 1))};
@@ -453,25 +455,139 @@ app.put('/api/settings/staff', adminOnly, async (req, res) => {
   if (new Set(list.map(s => s.n.toLowerCase())).size !== list.length) fail('Two team members have the same name');
   await setKV('staff', list); res.json({ok:true, staff:list});
 });
-app.get('/api/users', adminOnly, async (req, res) => res.json({users:(await all("SELECT id, name, login, role, active, created FROM users ORDER BY role = 'admin' DESC, name")).map(u => ({...u, active:!!u.active, me:u.id === req.user.id}))}));
+/* logins: the Owner manages Managers; the Super Admin manages everyone except itself */
+const ROLES = ['superadmin', 'admin', 'manager'];
+const canManage = (me, u) => me.role === 'superadmin' ? u.role !== 'superadmin' : me.role === 'admin' && u.role === 'manager';
+app.get('/api/users', adminOnly, async (req, res) => {
+  const rows = await all('SELECT id, name, login, role, active, created FROM users');
+  rows.sort((a, b) => ROLES.indexOf(a.role) - ROLES.indexOf(b.role) || a.name.localeCompare(b.name));
+  res.json({users:rows.map(u => ({...u, active:!!u.active, me:u.id === req.user.id, canEdit:u.id === req.user.id || canManage(req.user, u)}))});
+});
 app.post('/api/users', adminOnly, async (req, res) => {
   const b = obj(req.body), name = str(b.name, 60, 'Name'); if (!name) fail('Enter the name');
+  const role = b.role === 'admin' ? 'admin' : 'manager';
+  if (role === 'admin' && !isSuper(req)) fail('Only the Super Admin can add an Owner login', 403);
   const login = cleanLogin(b.login), pw = String(b.password || '');
   if (pw.length < 6) fail('Password needs at least 6 characters');
   if (await one('SELECT id FROM users WHERE login = ?', [login])) fail('This mobile/username already has a login');
-  await run('INSERT INTO users (name, login, pass, role, active, created) VALUES (?, ?, ?, ?, 1, ?)', [name, login, A.hashPassword(pw), 'manager', now()]);
+  await run('INSERT INTO users (name, login, pass, role, active, created) VALUES (?, ?, ?, ?, 1, ?)', [name, login, A.hashPassword(pw), role, now()]);
   res.json({ok:true});
 });
 app.post('/api/users/:id/password', adminOnly, async (req, res) => {
   const u = await one('SELECT * FROM users WHERE id = ?', [Number(req.params.id) || 0]); if (!u) fail('Login not found', 404);
+  if (u.id !== req.user.id && !canManage(req.user, u)) fail("You can't change this login's password", 403);
   const pw = String(obj(req.body).password || ''); if (pw.length < 6) fail('Password needs at least 6 characters');
   await run('UPDATE users SET pass = ? WHERE id = ?', [A.hashPassword(pw), u.id]); if (u.id !== req.user.id) await A.delUserSessions(u.id);
   res.json({ok:true});
 });
 app.post('/api/users/:id/active', adminOnly, async (req, res) => {
   const u = await one('SELECT * FROM users WHERE id = ?', [Number(req.params.id) || 0]); if (!u) fail('Login not found', 404);
-  if (u.role === 'admin') fail("The owner's login can't be turned off");
+  if (u.role === 'superadmin') fail("The Super Admin login can't be turned off");
+  if (u.id === req.user.id) fail("You can't turn off your own login");
+  if (!canManage(req.user, u)) fail("You can't change this login", 403);
   const on = bool(obj(req.body).active); await run('UPDATE users SET active = ? WHERE id = ?', [on ? 1 : 0, u.id]); if (!on) await A.delUserSessions(u.id);
+  res.json({ok:true});
+});
+
+/* ---------- Super Admin only ---------- */
+app.put('/api/settings/invoice', superOnly, async (req, res) => {
+  const b = obj(req.body), prefix = str(b.prefix, 10, 'Invoice prefix').toUpperCase();
+  if (!/^[A-Z0-9-]{1,10}$/.test(prefix)) fail('Invoice prefix: 1 to 10 letters, numbers or -');
+  const terms = arr(b.terms).map(x => str(x, 200, 'Each invoice term')).filter(Boolean).slice(0, 8);
+  const invoice = {prefix, terms:terms.length ? terms : S.DEFAULT_TERMS};
+  await setKV('invoice', invoice); res.json({ok:true, invoice});
+});
+app.put('/api/settings/cats', superOnly, async (req, res) => {
+  const list = arr(obj(req.body).cats).slice(0, 30).map(x => ({from:str(obj(x).from, 40, 'Category'), to:str(obj(x).to, 40, 'Category')}));
+  if (!list.length || list.some(x => !x.to)) fail('Every category needs a name');
+  if (list.some(x => x.to.toLowerCase() === 'all')) fail('“All” is used for the filter tab. Pick another name.');
+  if (new Set(list.map(x => x.to.toLowerCase())).size !== list.length) fail('Two categories have the same name');
+  const st = await settings(), old = st.cats;
+  for (const fx of S.FIXED_CATS) if (!list.some(x => x.from === fx && x.to === fx)) fail(`${fx} is needed for the ${fx === 'PPF' ? 'PPF' : 'coating'} details, so it can't be renamed or removed`);
+  if (list.some(x => x.from && !old.includes(x.from))) fail('The category list was changed by someone else. Reload and try again.');
+  const removed = old.filter(o => !list.some(x => x.from === o));
+  const used = removed.find(o => st.catalog.some(s => s.cat === o));
+  if (used) fail(`“${used}” still has services. Move or remove them first.`);
+  const map = Object.fromEntries(list.filter(x => x.from).map(x => [x.from, x.to]));
+  const catalog = st.catalog.map(s => ({...s, cat:map[s.cat] || s.cat})), cats = list.map(x => x.to);
+  await tx(async c => { await setKV('cats', cats, c); await setKV('catalog', catalog, c); });
+  res.json({ok:true, cats, catalog});
+});
+app.put('/api/jobs/:id', superOnly, async (req, res) => {
+  const id = String(req.params.id), st = await settings(), b = obj(req.body), f = obj(b.f);
+  const name = str(f.name, 80, 'Customer name'); if (!name) fail('Enter the customer name');
+  const ph = mobile(f.mob);
+  const email = str(f.email, 120, 'Email'); if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Enter a valid email or leave it empty');
+  const reg = str(f.reg, 20, 'Car number').toUpperCase().replace(/\s+/g, ' '); if (regKey(reg).length < 4) fail('Enter the car number');
+  const model = str(f.model, 60, 'Make & model'); if (!model) fail('Enter the make & model');
+  const color = str(f.color, 30, 'Colour'), odo = str(f.odo, 12, 'Odometer'), reqText = str(f.req, 500, 'Customer request');
+  if (odo && !/^[\d,]+$/.test(odo)) fail('Odometer should be a number');
+  const seg = int(b.seg, 0, 4, 'Car segment');
+  const fuel = ['E', '¼', '½', '¾', 'F'].includes(b.fuel) ? b.fuel : '½';
+  const lines = arr(b.lines).slice(0, 40).map(l => {
+    l = obj(l); const n = str(l.name, 80, 'Service name'); if (!n) fail('Every service line needs a name');
+    return {id:typeof l.id === 'string' && S.svcIn(st.catalog, l.id) ? l.id : 'custom', name:n, sac:'998714', amt:int(Math.round(Number(l.amt)), 0, 100000000, `Price of ${n}`)};
+  });
+  if (!lines.length) fail('Keep at least one service');
+  const svcs = [...new Set(lines.map(l => l.id).filter(x => x !== 'custom'))];
+  const disc = int(b.disc || 0, 0, 100, 'Discount');
+  const bay = b.bay ? str(b.bay, 40, 'Bay') : '';
+  if (bay && !st.bays.some(x => x.id === bay)) fail('That bay no longer exists. Pick another.');
+  const team = [...new Set(arr(b.team).map(x => String(x)).filter(n => st.staff.some(s => s.n === n)))];
+  if (!S.validDT(b.due)) fail('Pick the promised delivery date and time');
+  const prio = b.prio === 'Urgent' ? 'Urgent' : 'Normal';
+  await tx(async c => {
+    const j = jobFromRow(await one('SELECT * FROM jobs WHERE id = ? FOR UPDATE', [id], c)); if (!j) fail('Job card not found', 404);
+    if (j.inv || j.status === 'done') fail('This job card already has an invoice, so it can’t be edited');
+    const t = S.totals(lines, disc, j.gst), paid = await jobPaid(id, c);
+    if (t.total < paid) fail(`The new total (${S.inr(t.total)}) can't be less than the ${S.inr(paid)} already paid`);
+    const cu = {id:(await run(`INSERT INTO customers (name, phone, email, created) VALUES (?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE name = ?, email = IF(? = '', email, ?), id = LAST_INSERT_ID(id)`, [name, ph, email, now(), name, email, email], c)).insertId};
+    const k = regKey(reg);
+    const v = {id:(await run(`INSERT INTO vehicles (customer_id, reg, reg_key, model, color, seg) VALUES (?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE customer_id = ?, reg = ?, model = ?, color = IF(? = '', color, ?), seg = ?, id = LAST_INSERT_ID(id)`, [cu.id, reg, k, model, color, seg, cu.id, reg, model, color, color, seg], c)).insertId};
+    const doc = docOf(j);
+    Object.assign(doc, {cust:name, ph:S.fmtPh(ph), email, car:model, color, reg, seg, odo, fuel, req:reqText, lines, svcs, disc, bay, team, due:String(b.due).slice(0, 16), prio});
+    if (!svcs.includes('ppf-custom')) doc.panels = [];
+    if (S.hasCatIn(st.catalog, svcs, 'PPF') || doc.ppf){ const p = obj(b.ppf || doc.ppf); doc.ppf = {finish:p.finish === 'Matte' ? 'Matte' : 'Gloss', film:str(p.film, 60, 'Film'), warr:int(p.warr ?? 5, 0, 15, 'PPF warranty'), notes:str(p.notes, 200, 'PPF notes')}; }
+    if (!S.hasCatIn(st.catalog, svcs, 'PPF') && b.ppf === null) delete doc.ppf;
+    if (S.hasCatIn(st.catalog, svcs, 'Coating') || doc.coat){ const p = obj(b.coat || doc.coat); doc.coat = {product:str(p.product, 60, 'Coating product'), layers:int(p.layers ?? 2, 1, 5, 'Layers'), warr:int(p.warr ?? 3, 0, 10, 'Coating warranty')}; }
+    if (!S.hasCatIn(st.catalog, svcs, 'Coating') && b.coat === null) delete doc.coat;
+    await run('UPDATE jobs SET customer_id = ?, vehicle_id = ?, doc = ? WHERE id = ?', [cu.id, v.id, JSON.stringify(doc), id], c);
+    await log(c, id, now(), `Job card edited by ${whoName(req.user)} · total ${S.inr(t.total)}`, req.user.id);
+  });
+  res.json({ok:true});
+});
+app.put('/api/customers/:id', superOnly, async (req, res) => {
+  const cid = Number(req.params.id) || 0, b = obj(req.body);
+  const name = str(b.name, 80, 'Customer name'); if (!name) fail('Enter the customer name');
+  const ph = mobile(b.ph);
+  const email = str(b.email, 120, 'Email'); if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Enter a valid email or leave it empty');
+  const cars = arr(b.cars).slice(0, 30).map(x => {
+    x = obj(x); const reg = str(x.reg, 20, 'Car number').toUpperCase().replace(/\s+/g, ' ');
+    if (regKey(reg).length < 4) fail('Enter every car number');
+    const model = str(x.model, 60, 'Make & model'); if (!model) fail('Enter the make & model for every car');
+    const seg = x.seg === null || x.seg === '' || x.seg === undefined ? null : int(Number(x.seg), 0, 4, 'Car segment');
+    return {id:Number(x.id) || 0, reg, model, color:str(x.color, 30, 'Colour'), seg};
+  });
+  await tx(async c => {
+    if (!await one('SELECT id FROM customers WHERE id = ? FOR UPDATE', [cid], c)) fail('Customer not found', 404);
+    if (await one('SELECT id FROM customers WHERE phone = ? AND id <> ?', [ph, cid], c)) fail('Another customer already has this mobile number');
+    await run('UPDATE customers SET name = ?, phone = ?, email = ? WHERE id = ?', [name, ph, email, cid], c);
+    for (const car of cars){
+      if (!await one('SELECT id FROM vehicles WHERE id = ? AND customer_id = ?', [car.id, cid], c)) fail('Car not found for this customer', 404);
+      if (await one('SELECT id FROM vehicles WHERE reg_key = ? AND id <> ?', [regKey(car.reg), car.id], c)) fail(`${car.reg} is already saved for another customer`);
+      await run('UPDATE vehicles SET reg = ?, reg_key = ?, model = ?, color = ?, seg = ? WHERE id = ?', [car.reg, regKey(car.reg), car.model, car.color, car.seg, car.id], c);
+    }
+    // keep open job cards in step; invoices are legal documents and stay as they were
+    for (const r of await all("SELECT * FROM jobs WHERE customer_id = ? AND status <> 'done' FOR UPDATE", [cid], c)){
+      const doc = docOf(jobFromRow(r)), car = cars.find(x => x.id === r.vehicle_id);
+      Object.assign(doc, {cust:name, ph:S.fmtPh(ph), email});
+      if (car) Object.assign(doc, {reg:car.reg, car:car.model, color:car.color});
+      await run('UPDATE jobs SET doc = ? WHERE id = ?', [JSON.stringify(doc), r.id], c);
+      await log(c, r.id, now(), `Customer details updated by ${whoName(req.user)}`, req.user.id);
+    }
+  });
   res.json({ok:true});
 });
 

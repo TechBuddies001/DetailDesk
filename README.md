@@ -1,7 +1,10 @@
 # DetailDesk
 
 Job cards, PPF and coating records, GST invoices and WhatsApp messages for a car care / detailing studio.
-It has two logins: **Owner (Admin)** and **Manager**.
+It has three kinds of login:
+- **Super Admin:** you, the software provider. This is the first login, made on the setup screen.
+- **Owner (Admin):** the studio owner, your client.
+- **Manager:** studio staff.
 
 ## What it does
 
@@ -27,6 +30,17 @@ It has two logins: **Owner (Admin)** and **Manager**.
   - Bays and team.
   - Manager logins.
   - What managers can do: see sales, cancel invoices, maximum discount.
+
+**Super Admin only:**
+- Add Owner logins, and reset or turn off any login.
+- Edit a job card before its invoice: customer and car details, services and prices (custom lines too), discount, bay, team and delivery.
+- Edit customer and car details. Open job cards update too; invoices keep what was printed.
+- Change the invoice number prefix (numbering continues) and the terms printed on invoices.
+- Add, rename or remove service categories. PPF and Coating stay fixed.
+
+The Owner keeps everything else in Settings and manages Manager logins.
+
+When an older install is upgraded, its first Owner login becomes the Super Admin automatically.
 
 The server enforces every rule, not only the screen:
 - the manager's discount limit,

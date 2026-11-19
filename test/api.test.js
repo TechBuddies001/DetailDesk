@@ -44,7 +44,7 @@ test('first run: setup creates the owner and logs in', async () => {
   r = await anon.get('/api/home'); assert.equal(r.status, 401);
   r = await owner.post('/api/setup', {bizName:'Shine Lab', name:'Akash', login:'98765 00000', password:'short'}); assert.equal(r.status, 400);
   r = await owner.post('/api/setup', {bizName:'Shine Lab', name:'Akash', login:'98765 00000', password:'secret123'}); assert.equal(r.status, 200);
-  r = await owner.get('/api/session'); assert.equal(r.data.user.role, 'admin'); assert.equal(r.data.setupNeeded, false);
+  r = await owner.get('/api/session'); assert.equal(r.data.user.role, 'superadmin', 'the first login is the Super Admin'); assert.equal(r.data.setupNeeded, false);
   r = await anon.post('/api/setup', {bizName:'X', name:'Y', login:'99999 99999', password:'secret123'}); assert.equal(r.status, 409);
 });
 
@@ -151,4 +151,73 @@ test('several people saving at once: unique numbers, no overpayment', async () =
   assert.equal(S.paidOf(r.data.inv), total, 'never collects more than the invoice total: ' + pays.map(p => p.status).join());
   assert.deepEqual(pays.map(p => p.status).sort(), [200, 400], 'second payer is told it is already paid');
   assert.equal(r.data.inv.lines[0].name, 'Foam wash + wax'); assert.equal(r.data.inv.ph, '90000 00001'.replace('0 00001', `0 0000${ids.indexOf(r.data.inv.jobId) + 1}`));
+});
+
+test('Super Admin: owner logins, job and customer edits, invoice settings, categories', async () => {
+  const fy = S.fyOf(S.isoDT(new Date()));
+  let r = await owner.post('/api/users', {name:'Client Owner', login:'9811100000', password:'client123', role:'admin'}); assert.equal(r.status, 200);
+  const cl = client(); r = await cl.post('/api/login', {login:'9811100000', password:'client123'}); assert.equal(r.status, 200);
+  r = await cl.get('/api/boot'); assert.equal(r.data.me.role, 'admin'); assert.ok(Array.isArray(r.data.cats)); assert.equal(r.data.invoice.prefix, 'INV');
+  // the Owner manages Managers only
+  r = await cl.post('/api/users', {name:'X', login:'9811100001', password:'xxxxxx1', role:'admin'}); assert.equal(r.status, 403);
+  r = await cl.post('/api/users/1/password', {password:'hacked123'}); assert.equal(r.status, 403);
+  r = await cl.post('/api/users/1/active', {active:false}); assert.equal(r.status, 400);
+  r = await cl.post('/api/users', {name:'Mgr Two', login:'9811100002', password:'mgr12345'}); assert.equal(r.status, 200);
+  r = await cl.get('/api/users'); assert.equal(r.data.users.find(u => u.role === 'superadmin').canEdit, false); assert.equal(r.data.users.find(u => u.login === '9811100002').canEdit, true);
+  for (const [m, u, b] of [['put', '/api/settings/invoice', {prefix:'X'}], ['put', '/api/settings/cats', {cats:[]}], ['put', '/api/jobs/JC-0001', {}], ['put', '/api/customers/1', {}]]){
+    r = await cl[m](u, b); assert.equal(r.status, 403, `owner blocked from ${u}`);
+  }
+  r = await cl.get('/api/home'); assert.equal(r.status, 200, 'owner still runs the studio');
+  // the Super Admin resets the Owner's password; the Owner is logged out
+  const clientRow = (await owner.get('/api/users')).data.users.find(u => u.login === '9811100000'); assert.equal(clientRow.canEdit, true);
+  r = await owner.post(`/api/users/${clientRow.id}/password`, {password:'client456'}); assert.equal(r.status, 200);
+  r = await cl.get('/api/home'); assert.equal(r.status, 401);
+
+  // edit a job card before its invoice
+  const mk = await owner.post('/api/jobs', wizard({f:{...wizard().f, mob:'9822200001', name:'Edit Me', reg:'MH 02 ED 0001'}, svcs:['wash', 'cer-9h'], disc:0, adv:1000, sig:null, bay:'', team:[]}));
+  assert.equal(mk.status, 200, JSON.stringify(mk.data)); const id = mk.data.id;
+  assert.ok((await owner.get('/api/jobs/' + id)).data.job.coat, 'coating details were saved');
+  const edit = {f:{name:'Edited Name', mob:'9822200001', email:'e@x.in', reg:'MH 02 ED 0001', model:'Kia Seltos', color:'Grey', odo:'100', req:'note'}, seg:3, fuel:'¾',
+    lines:[{id:'wash', name:'Foam wash + wax', amt:800}, {id:'custom', name:'Seat stain removal', amt:1200}], disc:0, bay:'Bay 2', team:['Ajay More'], due:'2030-02-01T12:00', prio:'Urgent', coat:null};
+  r = await owner.put('/api/jobs/' + id, {...edit, lines:[{id:'wash', name:'Foam', amt:100}]}); assert.equal(r.status, 400, 'total below the advance is refused');
+  r = await owner.put('/api/jobs/' + id, {...edit, lines:[]}); assert.equal(r.status, 400);
+  r = await owner.put('/api/jobs/' + id, edit); assert.equal(r.status, 200, JSON.stringify(r.data));
+  const j1 = (await owner.get('/api/jobs/' + id)).data.job;
+  assert.equal(j1.cust, 'Edited Name'); assert.equal(j1.total, Math.round(2000 * 1.18)); assert.equal(j1.coat, undefined); assert.equal(j1.bay, 'Bay 2');
+  assert.equal(j1.prio, 'Urgent'); assert.deepEqual(j1.svcs, ['wash']); assert.deepEqual(j1.team, ['Ajay More']); assert.equal(j1.lines[1].name, 'Seat stain removal'); assert.match(j1.log[0].text, /edited by/);
+  await owner.post(`/api/jobs/${id}/ready`); const inv = (await owner.post(`/api/jobs/${id}/invoice`)).data.no;
+  r = await owner.put('/api/jobs/' + id, edit); assert.equal(r.status, 400, 'no edits after the invoice');
+
+  // edit the customer and the car; invoices keep what they printed
+  const cid = (await owner.get('/api/customers?q=Edited')).data.list[0].id, prof = (await owner.get('/api/customers/' + cid)).data;
+  r = await owner.put('/api/customers/' + cid, {name:'Final Name', ph:'98220 41763', email:'', cars:prof.cars}); assert.equal(r.status, 400, 'phone of another customer');
+  r = await owner.put('/api/customers/' + cid, {name:'Final Name', ph:'9822200009', email:'', cars:prof.cars.map(c => ({...c, model:'Kia Seltos HTX'}))}); assert.equal(r.status, 200, JSON.stringify(r.data));
+  const prof2 = (await owner.get('/api/customers/' + cid)).data;
+  assert.equal(prof2.name, 'Final Name'); assert.equal(prof2.ph, '98222 00009'); assert.equal(prof2.cars[0].model, 'Kia Seltos HTX');
+  assert.equal((await owner.get('/api/invoice?no=' + encodeURIComponent(inv))).data.inv.cust, 'Edited Name');
+
+  // invoice prefix and terms
+  r = await owner.put('/api/settings/invoice', {prefix:'bad prefix', terms:[]}); assert.equal(r.status, 400);
+  r = await owner.put('/api/settings/invoice', {prefix:'sl', terms:['Thank you for choosing us!', '  ', 'Second line']}); assert.equal(r.status, 200);
+  assert.equal(r.data.invoice.prefix, 'SL'); assert.deepEqual(r.data.invoice.terms, ['Thank you for choosing us!', 'Second line']);
+  const mk2 = await owner.post('/api/jobs', wizard({f:{...wizard().f, mob:'9822200003', name:'Prefix Test', reg:'MH 02 PF 0003'}, svcs:['wash'], disc:0, adv:0, sig:null, bay:'', team:[]}));
+  await owner.post(`/api/jobs/${mk2.data.id}/ready`); const no2 = (await owner.post(`/api/jobs/${mk2.data.id}/invoice`)).data.no;
+  assert.ok(no2.startsWith(`SL/${fy}/`), no2); assert.ok(+no2.slice(-4) > +inv.slice(-4), 'numbering continues after a prefix change');
+  const pub = (await owner.get('/api/invoice?no=' + encodeURIComponent(no2))).data.link;
+  assert.match((await anon.get(new URL(pub).pathname)).data, /Thank you for choosing us!/);
+
+  // service categories
+  const cats0 = (await owner.get('/api/boot')).data.cats.map(c => ({from:c, to:c}));
+  r = await owner.put('/api/settings/cats', {cats:cats0.filter(c => c.from !== 'PPF')}); assert.equal(r.status, 400, 'PPF is fixed');
+  r = await owner.put('/api/settings/cats', {cats:[...cats0, {from:'', to:'All'}]}); assert.equal(r.status, 400);
+  r = await owner.put('/api/settings/cats', {cats:[...cats0.map(c => c.from === 'Mechanical' ? {from:c.from, to:'Mechanical & AC'} : c), {from:'', to:'Bike care'}]}); assert.equal(r.status, 200, JSON.stringify(r.data));
+  const b2 = (await owner.get('/api/boot')).data; assert.ok(b2.cats.includes('Bike care')); assert.equal(b2.catalog.find(s => s.id === 'ac').cat, 'Mechanical & AC');
+  r = await owner.put('/api/settings/cats', {cats:b2.cats.filter(c => c !== 'Mechanical & AC').map(c => ({from:c, to:c}))}); assert.equal(r.status, 400, 'category with services cannot go');
+  r = await owner.put('/api/settings/cats', {cats:b2.cats.filter(c => c !== 'Bike care').map(c => ({from:c, to:c}))}); assert.equal(r.status, 200, 'empty category can go');
+});
+
+test('upgrade: an older owner login becomes the Super Admin on start', async () => {
+  await D.run("UPDATE users SET role = 'admin' WHERE id = 1"); await D.init();
+  assert.equal((await D.one('SELECT role FROM users WHERE id = 1')).role, 'superadmin');
+  assert.equal(Number((await D.one("SELECT COUNT(*) AS n FROM users WHERE role = 'superadmin'")).n), 1);
 });

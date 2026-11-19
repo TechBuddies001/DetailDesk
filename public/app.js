@@ -3,7 +3,10 @@
 /* ================= state & api ================= */
 const S = {me:null, biz:{}, perms:{}, catalog:[], bays:[], staff:[], view:'home', q:'', jobTab:'work', jobId:null, invNo:null, invTab:'all', custId:null, setTab:'business',
   data:null, nav:0, payMode:'UPI', after:null, wa:null, find:null, uploading:{}};
-const isAdmin = () => !!S.me && S.me.role === 'admin';
+const isAdmin = () => !!S.me && (S.me.role === 'admin' || S.me.role === 'superadmin'); // owner-level
+const isSuper = () => !!S.me && S.me.role === 'superadmin';
+const roleName = r => ({superadmin:'Super Admin', admin:'Owner · Admin', manager:'Manager'})[r] || r;
+const myRole = () => isSuper() ? 'Super Admin' : isAdmin() ? 'Admin' : 'Manager';
 const canSales = () => isAdmin() || !!S.perms.sales;
 const discLimit = () => isAdmin() ? 100 : Math.max(0, Math.min(100, +S.perms.disc || 0));
 const svc = id => svcIn(S.catalog, id);
@@ -56,7 +59,7 @@ function showAuth(sess){
 }
 async function enterApp(){
   const b = await api('/api/boot');
-  Object.assign(S, {me:b.me, biz:b.biz, perms:b.perms, catalog:b.catalog, bays:b.bays, staff:b.staff});
+  Object.assign(S, {me:b.me, biz:b.biz, perms:b.perms, catalog:b.catalog, bays:b.bays, staff:b.staff, invoice:b.invoice || {prefix:'INV', terms:DEFAULT_TERMS}, cats:b.cats || CATS.slice(1), catEdit:null});
   draftCache = null;
   document.body.classList.remove('auth-on'); $('#auth').hidden = true; $('#auth').innerHTML = '';
   fromHash(); await load(true);
@@ -166,8 +169,8 @@ function vJobs(d){
 function vJob(d){
   const j = d.job, t = jobTot(j), inv = j.invInfo;
   const acts = {
-    work:`<button class="btn" data-act="printjob">${ico('print')} Print job card</button><button class="btn wa" data-act="wa" data-k="update" data-id="${esc(j.id)}">${ico('chat')} Send update</button><button class="btn pri" data-act="ready" data-id="${esc(j.id)}">${ico('check')} Mark as ready</button>`,
-    ready:`<button class="btn" data-act="printjob">${ico('print')} Print job card</button><button class="btn wa" data-act="wa" data-k="ready" data-id="${esc(j.id)}">${ico('chat')} Tell customer</button><button class="btn pri" data-act="mkinv" data-id="${esc(j.id)}">${ico('bill')} Make invoice & deliver</button>`,
+    work:`${isSuper() ? `<button class="btn" data-act="editjob">Edit job card</button>` : ''}<button class="btn" data-act="printjob">${ico('print')} Print job card</button><button class="btn wa" data-act="wa" data-k="update" data-id="${esc(j.id)}">${ico('chat')} Send update</button><button class="btn pri" data-act="ready" data-id="${esc(j.id)}">${ico('check')} Mark as ready</button>`,
+    ready:`${isSuper() ? `<button class="btn" data-act="editjob">Edit job card</button>` : ''}<button class="btn" data-act="printjob">${ico('print')} Print job card</button><button class="btn wa" data-act="wa" data-k="ready" data-id="${esc(j.id)}">${ico('chat')} Tell customer</button><button class="btn pri" data-act="mkinv" data-id="${esc(j.id)}">${ico('bill')} Make invoice & deliver</button>`,
     done:`<button class="btn" data-act="printjob">${ico('print')} Print job card</button>${inv ? `<button class="btn pri" data-act="go" data-view="invoices" data-no="${esc(inv.no)}">${ico('bill')} Open invoice</button>` : ''}`
   }[j.status];
   const stIdx = {work:1, ready:2, done:3}[j.status];
@@ -293,7 +296,7 @@ function wStep2(){
 }
 function wStep3(){
   const w = W(), i = w.seg;
-  const cats = CATS.filter(c => c === 'All' || S.catalog.some(s => s.cat === c));
+  const cats = ['All', ...S.cats].filter(c => c === 'All' || S.catalog.some(s => s.cat === c));
   if (!cats.includes(w.cat)) w.cat = 'All';
   const tabs = `<div class="tabs" role="tablist">${cats.map(c => `<button class="tab" role="tab" aria-selected="${c === w.cat}" data-act="wcat" data-v="${c}">${c}</button>`).join('')}</div>`;
   const list = S.catalog.filter(s => w.cat === 'All' || s.cat === w.cat).map(s => {
@@ -481,7 +484,7 @@ function vInvoices(d){
         ${!v.cancelled && cur.canCancel ? `<button class="btn danger sm" data-act="cancelinv" data-no="${esc(v.no)}">Cancel invoice</button>` : ''}
       </div>
       <div class="link-row" style="margin-bottom:10px">Customer link: <a href="${esc(cur.link)}" target="_blank" rel="noopener">${esc(cur.link)}</a> <button class="btn sm" data-act="copy" data-text="${esc(cur.link)}">Copy</button></div>
-      <div class="paper-wrap">${invPaper(v, S.biz, cur.qr)}</div>` : ''}</div>
+      <div class="paper-wrap">${invPaper(v, S.biz, cur.qr, S.invoice.terms)}</div>` : ''}</div>
   </div>`;
 }
 
@@ -495,7 +498,7 @@ function vCustomers(d){
     </tbody></table></div>` : `<div class="empty">${q ? `No customers match “${esc(q)}”.` : 'No customers yet. They are added when you make a job card.'}</div>`}</section>
     ${c ? `<section class="card"><div class="card-h"><div class="row">${av(c.name)}<div><h3>${esc(c.name)}</h3><div class="small muted">Customer since ${esc(fDY(c.since))}</div></div></div></div>
       <div class="card-b sum-b">
-        <div class="row"><button class="btn wa sm" data-act="wa" data-k="hello" data-id="${c.id}">${ico('chat')} WhatsApp</button><button class="btn sm" data-act="custjob">${ico('plus')} New job card</button></div>
+        <div class="row"><button class="btn wa sm" data-act="wa" data-k="hello" data-id="${c.id}">${ico('chat')} WhatsApp</button><button class="btn sm" data-act="custjob">${ico('plus')} New job card</button>${isSuper() ? '<button class="btn sm" data-act="editcust">Edit details</button>' : ''}</div>
         <div class="kv"><span>Mobile</span><b>${esc(c.ph)}</b></div>
         ${c.email ? `<div class="kv"><span>Email</span><b>${esc(c.email)}</b></div>` : ''}
         <div class="kv"><span>Visits</span><b>${c.visits}</b></div>
@@ -512,7 +515,7 @@ function vCustomers(d){
 /* ---------- settings ---------- */
 function vSettings(d){
   const t = S.setTab, b = S.biz, p = S.perms;
-  const tabs = [['business', 'Business & GST'], ['prices', 'Services & prices'], ['team', 'Bays & team'], ['logins', 'Logins & access']];
+  const tabs = [['business', 'Business & GST'], ['prices', 'Services & prices'], ['team', 'Bays & team'], ['logins', 'Logins & access'], ...(isSuper() ? [['invoice', 'Invoice & categories']] : [])];
   let body = '';
   if (t === 'business') body = `<section class="card"><div class="card-b"><div class="grid2">
       <div class="field"><label for="b-name">Business name</label><input class="inp" id="b-name" data-biz="name" value="${esc(b.name)}"></div>
@@ -526,7 +529,7 @@ function vSettings(d){
   </div></section>`;
   if (t === 'prices') body = `<section class="card"><div class="card-h"><h3>Price list</h3><button class="btn sm" data-act="addsvc">${ico('plus')} Add service</button></div>
     <div class="tw"><table class="tbl"><thead><tr><th>Service</th>${SEGS.map(x => `<th class="num">${x}</th>`).join('')}<th></th></tr></thead><tbody>
-    ${CATS.slice(1).filter(c => S.catalog.some(s => s.cat === c)).map(c => `<tr class="grp"><td colspan="${SEGS.length + 2}">${c}</td></tr>` + S.catalog.filter(s => s.cat === c).map(s => `<tr><td>${esc(s.name)}${s.perSq ? '<div class="sub">₹ per sq ft</div>' : ''}</td>${(s.perSq || s.p).map((v, i) => `<td class="num"><input class="inp pin" data-price="${esc(s.id)}:${i}" inputmode="numeric" value="${v}" aria-label="${esc(s.name)} ${SEGS[i]} price"></td>`).join('')}<td>${s.id === 'ppf-custom' ? '' : `<button class="x" data-act="delsvc" data-id="${esc(s.id)}" aria-label="Remove ${esc(s.name)}">×</button>`}</td></tr>`).join('')).join('')}
+    ${S.cats.filter(c => S.catalog.some(s => s.cat === c)).map(c => `<tr class="grp"><td colspan="${SEGS.length + 2}">${c}</td></tr>` + S.catalog.filter(s => s.cat === c).map(s => `<tr><td>${esc(s.name)}${s.perSq ? '<div class="sub">₹ per sq ft</div>' : ''}</td>${(s.perSq || s.p).map((v, i) => `<td class="num"><input class="inp pin" data-price="${esc(s.id)}:${i}" inputmode="numeric" value="${v}" aria-label="${esc(s.name)} ${SEGS[i]} price"></td>`).join('')}<td>${s.id === 'ppf-custom' ? '' : `<button class="x" data-act="delsvc" data-id="${esc(s.id)}" aria-label="Remove ${esc(s.name)}">×</button>`}</td></tr>`).join('')).join('')}
     </tbody></table></div><p class="small muted" style="padding:10px 16px" id="price-state">Price changes save automatically and apply to new job cards. Old job cards and invoices keep their prices.</p></section>`;
   if (t === 'team') body = `<div class="grid2 al">
     <section class="card"><div class="card-h"><h3>Bays</h3><span class="small muted">${S.bays.length}</span></div>
@@ -536,10 +539,10 @@ function vSettings(d){
       <ul class="list">${S.staff.map(x => `<li>${av(x.n)}<div class="grow"><div class="t">${esc(x.n)}</div><div class="s">${esc(x.r)}</div></div><button class="x" data-act="delstaff" data-id="${esc(x.n)}" aria-label="Remove ${esc(x.n)}">×</button></li>`).join('') || '<li class="muted">No team members yet</li>'}</ul>
       <div class="addrow"><input class="inp" id="ns-n" placeholder="Name" aria-label="New team member name" maxlength="60"><input class="inp" id="ns-r" placeholder="Role (e.g. Polisher)" aria-label="New team member role" maxlength="60"><button class="btn" data-act="addstaff">${ico('plus')} Add</button></div></section>
   </div>`;
-  if (t === 'logins') body = `<section class="card"><div class="card-h"><h3>Logins</h3><button class="btn sm" data-act="adduser">${ico('plus')} Add manager login</button></div>
-      <ul class="list">${(d.users || []).map(u => `<li>${av(u.name)}<div class="grow"><div class="t">${esc(u.name)}${u.me ? ' (you)' : ''}</div><div class="s">${u.role === 'admin' ? 'Owner · Admin' : 'Manager'} · login ${esc(/^\d{10}$/.test(u.login) ? fmtPh(u.login) : u.login)}${u.active ? '' : ' · turned off'}</div></div>
-        <button class="btn sm" data-act="resetpw" data-id="${u.id}" data-name="${esc(u.name)}">${u.me ? 'Change password' : 'Reset password'}</button>
-        ${u.role === 'admin' ? '' : `<input type="checkbox" class="sw" data-useron="${u.id}" ${u.active ? 'checked' : ''} aria-label="Login on for ${esc(u.name)}">`}</li>`).join('')}</ul></section>
+  if (t === 'logins') body = `<section class="card"><div class="card-h"><h3>Logins</h3><button class="btn sm" data-act="adduser">${ico('plus')} ${isSuper() ? 'Add login' : 'Add manager login'}</button></div>
+      <ul class="list">${(d.users || []).map(u => `<li>${av(u.name)}<div class="grow"><div class="t">${esc(u.name)}${u.me ? ' (you)' : ''}</div><div class="s">${esc(roleName(u.role))} · login ${esc(/^\d{10}$/.test(u.login) ? fmtPh(u.login) : u.login)}${u.active ? '' : ' · turned off'}</div></div>
+        ${u.canEdit ? `<button class="btn sm" data-act="resetpw" data-id="${u.id}" data-name="${esc(u.name)}">${u.me ? 'Change password' : 'Reset password'}</button>` : ''}
+        ${u.canEdit && !u.me && u.role !== 'superadmin' ? `<input type="checkbox" class="sw" data-useron="${u.id}" ${u.active ? 'checked' : ''} aria-label="Login on for ${esc(u.name)}">` : ''}</li>`).join('')}</ul></section>
     <section class="card mt16"><div class="card-h"><h3>What managers can do</h3></div><div class="card-b">
       <p class="small muted" style="margin-bottom:6px">Managers can always make job cards and invoices and take payments. You decide the rest.</p>
       <div class="swrow"><div><div class="t">See sales figures</div><div class="s">Monthly sales, top services and how much each customer has spent.</div></div><input type="checkbox" class="sw" data-perm="sales" ${p.sales ? 'checked' : ''} aria-label="See sales figures"></div>
@@ -547,7 +550,22 @@ function vSettings(d){
       <div class="swrow"><div><div class="t">Maximum discount</div><div class="s">Managers can't give more than this on a job card.</div></div><div class="row"><input class="inp pin" id="perm-disc" inputmode="numeric" value="${+p.disc}" aria-label="Maximum discount percent"> %</div></div>
       <div class="swrow"><div><div class="t">Settings, prices and logins</div><div class="s">Always owner only.</div></div>${chip(ico('lock') + ' Admin only', 'mute')}</div>
     </div></section>`;
-  return ph('Settings', 'Settings', 'Only you (Admin) can see this page.') + `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${t === k}" data-act="stab" data-tab="${k}">${l}</button>`).join('')}</div><div style="max-width:960px">${body}</div>`;
+  if (t === 'invoice' && isSuper()){
+    if (!S.catEdit) S.catEdit = S.cats.map(c => ({from:c, to:c}));
+    const fy = fyOf(isoDT(new Date()));
+    body = `<section class="card"><div class="card-h"><h3>Invoice</h3></div><div class="card-b stack">
+      <div class="field"><label for="inv-prefix">Invoice number prefix</label><input class="inp up" id="inv-prefix" value="${esc(S.invoice.prefix)}" maxlength="10" style="max-width:200px"><span class="hint" id="inv-prefix-hint">Next invoices look like ${esc(S.invoice.prefix)}/${fy}/0012. Numbering continues; only the prefix changes.</span></div>
+      <div class="field"><label for="inv-terms">Terms printed on every invoice (one per line, up to 8)</label><textarea class="inp" id="inv-terms" rows="4">${esc(S.invoice.terms.join('\n'))}</textarea></div>
+      <div><button class="btn pri" data-act="invsave">${ico('check')} Save invoice settings</button></div>
+    </div></section>
+    <section class="card mt16"><div class="card-h"><h3>Service categories</h3><button class="btn sm" data-act="catadd">${ico('plus')} Add category</button></div><div class="card-b stack">
+      <p class="small muted">Renaming a category moves its services with it. A category can be removed only when no service uses it. PPF and Coating stay fixed because the PPF and coating details depend on them.</p>
+      ${S.catEdit.map((c, i) => { const fixed = FIXED_CATS.includes(c.from) && c.from !== ''; const n = S.catalog.filter(s => s.cat === c.from).length;
+        return `<div class="row"><input class="inp" style="flex:1;min-width:160px" data-cat="${i}" value="${esc(c.to)}" ${fixed ? 'disabled' : ''} aria-label="Category name" placeholder="New category name"><span class="small muted" style="min-width:90px">${c.from ? `${n} service${n === 1 ? '' : 's'}` : 'new'}</span>${fixed ? chip(ico('lock') + ' Fixed', 'mute') : `<button class="x" data-act="catrm" data-i="${i}" aria-label="Remove category">×</button>`}</div>`; }).join('')}
+      <div><button class="btn pri" data-act="catsave">${ico('check')} Save categories</button></div>
+    </div></section>`;
+  }
+  return ph('Settings', 'Settings', isSuper() ? 'Owner settings, plus Super Admin options in the last tab.' : 'Only you (Admin) can see this page.') + `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${t === k}" data-act="stab" data-tab="${k}">${l}</button>`).join('')}</div><div style="max-width:960px">${body}</div>`;
 }
 const vLock = () => `<div class="lock"><div class="lk-i">${ico('lock')}</div><h2>Settings are for the owner</h2><p>Business details, GST, prices, bays, team and logins are managed from the owner's (Admin) login.</p><button class="btn" data-act="go" data-view="home">${ico('back')} Back to home</button></div>`;
 const vError = msg => `<div class="lock"><div class="lk-i">${ico('alert')}</div><h2>Couldn't load this page</h2><p>${esc(msg)}</p><div class="row" style="justify-content:center"><button class="btn pri" data-act="retry">Try again</button><button class="btn" data-act="go" data-view="home">${ico('back')} Home</button></div></div>`;
@@ -585,8 +603,8 @@ function render(){
   if (!S.me) return;
   $('#nav').innerHTML = navHTML();
   $('#biz-name').textContent = S.biz.name || '';
-  $('#rail-foot').innerHTML = `Logged in as ${esc(S.me.name)} (${isAdmin() ? 'Admin' : 'Manager'}). <button data-act="logout">Log out</button>`;
-  $('#who').innerHTML = `<button class="who-btn" data-act="account" aria-label="Account">${av(S.me.name)}<span class="who-t"><b>${esc(S.me.name)}</b><br><span class="muted">${isAdmin() ? 'Admin' : 'Manager'}</span></span></button>`;
+  $('#rail-foot').innerHTML = `Logged in as ${esc(S.me.name)} (${myRole()}). <button data-act="logout">Log out</button>`;
+  $('#who').innerHTML = `<button class="who-btn" data-act="account" aria-label="Account">${av(S.me.name)}<span class="who-t"><b>${esc(S.me.name)}</b><br><span class="muted">${myRole()}</span></span></button>`;
   const v = S.view;
   let html;
   try { html = (v === 'settings' && !isAdmin()) ? vLock() : S.data ? VIEWS[v](S.data) : vError('No data'); }
@@ -701,7 +719,7 @@ function payModal(no){
     <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="paysave" data-no="${esc(v.no)}">${ico('check')} Save payment</button></div>`);
 }
 function accountModal(){
-  modal(`<div class="mh"><div><p class="eyebrow">${isAdmin() ? 'Owner · Admin' : 'Manager'}</p><h3>${esc(S.me.name)}</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+  modal(`<div class="mh"><div><p class="eyebrow">${roleName(S.me.role)}</p><h3>${esc(S.me.name)}</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
     <form id="pw-form" class="stack"><div class="field"><label for="pw-cur">Current password</label><input class="inp" id="pw-cur" type="password" autocomplete="current-password" required></div>
     <div class="field"><label for="pw-new">New password (at least 6 characters)</label><input class="inp" id="pw-new" type="password" autocomplete="new-password" minlength="6" required></div>
     <button class="btn" type="submit">Change password</button></form>
@@ -710,14 +728,14 @@ function accountModal(){
 function addSvcModal(){
   modal(`<div class="mh"><h3>Add a service</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
     <div class="field"><label for="ns-name">Service name</label><input class="inp" id="ns-name" autocomplete="off" maxlength="80"></div>
-    <div class="grid2"><div class="field"><label for="ns-cat">Category</label><select class="inp" id="ns-cat">${CATS.slice(1).map(c => `<option>${c}</option>`).join('')}</select></div>
+    <div class="grid2"><div class="field"><label for="ns-cat">Category</label><select class="inp" id="ns-cat">${S.cats.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
     <div class="field"><label for="ns-hrs">Work time (hours)</label><input class="inp" id="ns-hrs" inputmode="decimal" value="2"></div></div>
     <div class="grid2">${SEGS.map((s, i) => `<div class="field"><label for="ns-p${i}">${s} (₹)</label><input class="inp" id="ns-p${i}" inputmode="numeric" placeholder="0"></div>`).join('')}</div>
     <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="addsvcok">${ico('check')} Add service</button></div>`);
 }
 function userModal(){
-  modal(`<div class="mh"><h3>Add a manager login</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
-    <form id="user-form" class="stack"><div class="field"><label for="u-name">Name</label><input class="inp" id="u-name" required maxlength="60"></div>
+  modal(`<div class="mh"><h3>${isSuper() ? 'Add a login' : 'Add a manager login'}</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <form id="user-form" class="stack">${isSuper() ? `<div class="field"><label for="u-role">Login type</label><select class="inp" id="u-role"><option value="admin">Owner · Admin (the studio owner, your client)</option><option value="manager" selected>Manager</option></select></div>` : ''}<div class="field"><label for="u-name">Name</label><input class="inp" id="u-name" required maxlength="60"></div>
     <div class="field"><label for="u-login">Mobile number (used to log in)</label><input class="inp" id="u-login" required inputmode="tel" autocomplete="off"></div>
     <div class="field"><label for="u-pw">Password (at least 6 characters)</label><input class="inp" id="u-pw" type="text" required minlength="6" autocomplete="off"><span class="hint">Share it with the manager. They can change it after logging in.</span></div>
     <div class="m-row"><button class="btn" type="button" data-act="close">Cancel</button><button class="btn pri" type="submit">Add login</button></div></form>`);
@@ -727,6 +745,71 @@ function resetPwModal(id, name){
     <form id="reset-form" class="stack" data-id="${+id}">${+id === S.me.id ? `<div class="field"><label for="pw-cur">Current password</label><input class="inp" id="pw-cur" type="password" required autocomplete="current-password"></div>` : ''}
     <div class="field"><label for="rp-pw">New password (at least 6 characters)</label><input class="inp" id="rp-pw" type="text" required minlength="6" autocomplete="off"></div>
     <div class="m-row"><button class="btn" type="button" data-act="close">Cancel</button><button class="btn pri" type="submit">Save password</button></div></form>`);
+}
+
+
+/* ================= Super Admin: edit job card and customer ================= */
+function openEditJob(){
+  const j = S.data && S.data.job; if (!j || j.inv) return;
+  S.ej = {id:j.id, gst:j.gst, f:{name:j.cust, mob:j.ph, email:j.email || '', reg:j.reg, model:j.car, color:j.color || '', odo:j.odo || '', req:j.req || ''}, seg:j.seg, fuel:j.fuel,
+    lines:j.lines.map(l => ({id:l.id || 'custom', name:l.name, amt:l.amt})), disc:j.disc || 0, bay:j.bay || '', team:[...(j.team || [])], due:j.due, prio:j.prio || 'Normal',
+    ppf:{finish:'Gloss', film:'', warr:5, notes:'', ...(j.ppf || {})}, coat:{product:'', layers:2, warr:3, ...(j.coat || {})}, paid:j.paid || 0};
+  modal(ejHTML(), 'wide');
+}
+const ejHas = c => S.ej.lines.some(l => { const s = svc(l.id); return !!s && s.cat === c; });
+function ejTotalText(){ const e = S.ej, t = totals(e.lines.map(l => ({amt:Math.max(0, Math.round(+l.amt || 0))})), e.disc, e.gst); return `Total ${inr(t.total)}${t.half ? ' incl. GST' : ''}${e.paid ? ` · already paid ${inr(e.paid)}` : ''}`; }
+function ejHTML(){
+  const e = S.ej, fld = (k, l, mode = '') => `<div class="field"><label for="ej-${k}">${l}</label><input class="inp" id="ej-${k}" data-ej="${k}" value="${esc(e.f[k])}" ${mode ? `inputmode="${mode}"` : ''} autocomplete="off"></div>`;
+  return `<div class="mh"><div><p class="eyebrow">Super Admin</p><h3>Edit job card ${esc(e.id)}</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <div class="grid2">${fld('name', 'Customer name')}${fld('mob', 'Mobile', 'tel')}${fld('email', 'Email', 'email')}${fld('reg', 'Car number')}${fld('model', 'Make & model')}${fld('color', 'Colour')}${fld('odo', 'Odometer (km)', 'numeric')}
+      <div class="field"><label for="ej-seg">Car segment</label><select class="inp" id="ej-seg" data-ejs="seg">${SEGS.map((s, i) => `<option value="${i}" ${i === e.seg ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>
+    <h4 class="sub-h">Services & prices</h4>
+    <div class="stack">${e.lines.map((l, i) => `<div class="ejl"><input class="inp" data-ejl="${i}:name" value="${esc(l.name)}" aria-label="Service name" maxlength="80"><input class="inp" data-ejl="${i}:amt" inputmode="numeric" value="${esc(l.amt)}" aria-label="Price for ${esc(l.name)}"><button class="x" data-act="ejrm" data-i="${i}" aria-label="Remove ${esc(l.name)}">×</button></div>`).join('') || '<p class="small muted">No services. Add at least one.</p>'}</div>
+    <div class="ejadd"><select class="inp" id="ej-add" aria-label="Service to add">${S.catalog.map(s => `<option value="${esc(s.id)}">${esc(s.name)} · ${s.perSq ? 'set price' : inr(s.p[e.seg])}</option>`).join('')}</select><button class="btn" data-act="ejadd">${ico('plus')} Add</button><button class="btn" data-act="ejcustom">Custom line</button></div>
+    <div class="row-between"><div class="row"><label for="ej-disc" class="small">Discount %</label><input class="inp xs" id="ej-disc" data-ejs="disc" inputmode="numeric" value="${e.disc}"></div><b id="ej-total">${esc(ejTotalText())}</b></div>
+    ${ejHas('PPF') ? `<h4 class="sub-h">PPF details</h4><div class="grid2">
+      <div class="field"><label for="ej-pfin">Finish</label><select class="inp" id="ej-pfin" data-ejp="finish">${['Gloss', 'Matte'].map(x => `<option ${x === e.ppf.finish ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label for="ej-pfilm">Film / brand</label><input class="inp" id="ej-pfilm" data-ejp="film" value="${esc(e.ppf.film)}" maxlength="60"></div>
+      <div class="field"><label for="ej-pwarr">Warranty (years)</label><input class="inp" id="ej-pwarr" data-ejp="warr" inputmode="numeric" value="${esc(e.ppf.warr)}"></div>
+      <div class="field"><label for="ej-pnotes">Notes</label><input class="inp" id="ej-pnotes" data-ejp="notes" value="${esc(e.ppf.notes)}" maxlength="200"></div></div>` : ''}
+    ${ejHas('Coating') ? `<h4 class="sub-h">Coating details</h4><div class="grid2">
+      <div class="field"><label for="ej-cprod">Product</label><input class="inp" id="ej-cprod" data-ejc="product" value="${esc(e.coat.product)}" maxlength="60"></div>
+      <div class="field"><label for="ej-clay">Layers</label><input class="inp" id="ej-clay" data-ejc="layers" inputmode="numeric" value="${esc(e.coat.layers)}"></div>
+      <div class="field"><label for="ej-cwarr">Warranty (years)</label><input class="inp" id="ej-cwarr" data-ejc="warr" inputmode="numeric" value="${esc(e.coat.warr)}"></div></div>` : ''}
+    <h4 class="sub-h">Bay, team & delivery</h4>
+    <div class="grid2">
+      <div class="field"><label for="ej-bay">Bay</label><select class="inp" id="ej-bay" data-ejs="bay"><option value="">No bay</option>${S.bays.map(b => `<option value="${esc(b.id)}" ${b.id === e.bay ? 'selected' : ''}>${esc(b.id)} · ${esc(b.type)}</option>`).join('')}</select></div>
+      <div class="field"><label for="ej-due">Promised delivery</label><input type="datetime-local" class="inp" id="ej-due" data-ejs="due" value="${esc(e.due)}"></div>
+      <div class="field"><label for="ej-prio">Priority</label><select class="inp" id="ej-prio" data-ejs="prio">${['Normal', 'Urgent'].map(x => `<option ${x === e.prio ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label for="ej-fuel">Fuel level</label><select class="inp" id="ej-fuel" data-ejs="fuel">${['E', '¼', '½', '¾', 'F'].map(x => `<option ${x === e.fuel ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+    </div>
+    <div class="pills">${S.staff.map(s => `<button class="pill ${e.team.includes(s.n) ? 'on' : ''}" aria-pressed="${e.team.includes(s.n)}" data-act="ejteam" data-v="${esc(s.n)}">${esc(s.n)}</button>`).join('') || '<span class="small muted">No team members in Settings yet.</span>'}</div>
+    <div class="field"><label for="ej-req">What the customer asked for</label><textarea class="inp" id="ej-req" data-ej="req" rows="2" maxlength="500">${esc(e.f.req)}</textarea></div>
+    <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="ejsave">${ico('check')} Save changes</button></div>`;
+}
+function ejRefresh(){ const y = $('#modal-root .modal') ? $('#modal-root .modal').scrollTop : 0; modal(ejHTML(), 'wide'); const m = $('#modal-root .modal'); if (m) m.scrollTop = y; }
+async function ejSave(){
+  const e = S.ej, hasP = ejHas('PPF'), hasC = ejHas('Coating');
+  const body = {f:e.f, seg:e.seg, fuel:e.fuel, lines:e.lines.map(l => ({id:l.id, name:l.name, amt:Math.round(+l.amt || 0)})), disc:e.disc, bay:e.bay, team:e.team, due:e.due, prio:e.prio,
+    ppf:hasP ? {...e.ppf, warr:+e.ppf.warr || 0} : (S.data.job.ppf ? null : undefined), coat:hasC ? {...e.coat, layers:+e.coat.layers || 1, warr:+e.coat.warr || 0} : (S.data.job.coat ? null : undefined)};
+  const r = await act(() => put(`/api/jobs/${enc(e.id)}`, body), 'Job card updated');
+  if (r){ closeModal(); S.ej = null; load(false); }
+}
+function openEditCust(){
+  const c = S.data && S.data.cur; if (!c) return;
+  S.ec = {id:c.id, name:c.name, ph:c.ph, email:c.email || '', cars:c.cars.map(x => ({id:x.id, reg:x.reg, model:x.model, color:x.color || '', seg:x.seg === null || x.seg === undefined ? '' : x.seg}))};
+  const e = S.ec;
+  modal(`<div class="mh"><div><p class="eyebrow">Super Admin</p><h3>Edit customer</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <div class="grid2"><div class="field"><label for="ec-name">Name</label><input class="inp" id="ec-name" data-ec="name" value="${esc(e.name)}" maxlength="80"></div>
+      <div class="field"><label for="ec-ph">Mobile</label><input class="inp" id="ec-ph" data-ec="ph" value="${esc(e.ph)}" inputmode="tel"></div>
+      <div class="field"><label for="ec-email">Email</label><input class="inp" id="ec-email" data-ec="email" value="${esc(e.email)}" inputmode="email"></div></div>
+    ${e.cars.map((x, i) => `<h4 class="sub-h">Car ${i + 1}</h4><div class="grid2">
+      <div class="field"><label for="ecc-${i}-reg">Car number</label><input class="inp up" id="ecc-${i}-reg" data-ecc="${i}:reg" value="${esc(x.reg)}" maxlength="20"></div>
+      <div class="field"><label for="ecc-${i}-model">Make & model</label><input class="inp" id="ecc-${i}-model" data-ecc="${i}:model" value="${esc(x.model)}" maxlength="60"></div>
+      <div class="field"><label for="ecc-${i}-color">Colour</label><input class="inp" id="ecc-${i}-color" data-ecc="${i}:color" value="${esc(x.color)}" maxlength="30"></div>
+      <div class="field"><label for="ecc-${i}-seg">Segment</label><select class="inp" id="ecc-${i}-seg" data-ecc="${i}:seg"><option value="">Not set</option>${SEGS.map((s, k) => `<option value="${k}" ${String(k) === String(x.seg) ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>`).join('')}
+    <p class="small muted">Open job cards are updated too. Invoices already made keep the details printed on them.</p>
+    <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="ecsave">${ico('check')} Save changes</button></div>`, 'wide');
 }
 
 /* ================= settings saving ================= */
@@ -747,7 +830,7 @@ document.addEventListener('submit', async e => {
     try { await post('/api/setup', {bizName:val('s-biz'), name:val('s-name'), login:val('s-login'), password:val('s-pw')}); await enterApp(); toast('Welcome! Set your GSTIN and UPI ID in Settings.'); } catch (x){ if (err) err.textContent = x.message; }
   }
   if (f.id === 'pw-form'){ const r = await act(() => post('/api/me/password', {current:val('pw-cur'), next:val('pw-new')}), 'Password changed'); if (r) closeModal(); }
-  if (f.id === 'user-form'){ const r = await act(() => post('/api/users', {name:val('u-name'), login:val('u-login'), password:val('u-pw')}), 'Manager login added'); if (r){ closeModal(); load(false); } }
+  if (f.id === 'user-form'){ const role = val('u-role') || 'manager'; const r = await act(() => post('/api/users', {name:val('u-name'), login:val('u-login'), password:val('u-pw'), role}), role === 'admin' ? 'Owner login added' : 'Manager login added'); if (r){ closeModal(); load(false); } }
   if (f.id === 'reset-form'){
     const id = +f.dataset.id;
     const r = id === S.me.id ? await act(() => post('/api/me/password', {current:val('pw-cur'), next:val('rp-pw')}), 'Password changed') : await act(() => post(`/api/users/${id}/password`, {password:val('rp-pw')}), 'Password reset. Tell the manager the new one.');
@@ -762,7 +845,7 @@ document.addEventListener('click', async e => {
     case 'retry': load(true); break;
     case 'jtab': S.jobTab = d.tab; load(false); break;
     case 'itab': S.invTab = d.tab; load(false); break;
-    case 'stab': S.setTab = d.tab; render(); break;
+    case 'stab': S.setTab = d.tab; S.catEdit = null; render(); break;
     case 'pickinv': S.invNo = d.no; await act(async () => { S.data.cur = await api(`/api/invoice?no=${enc(d.no)}`); render(); }); break;
     case 'pickcust': S.custId = +d.id; await act(async () => { S.data.cur = await api(`/api/customers/${enc(d.id)}`); render(); }); break;
     case 'clearq': S.q = ''; $('#q').value = ''; load(false); break;
@@ -813,7 +896,7 @@ document.addEventListener('click', async e => {
     case 'custjob': { const c = S.data && S.data.cur; if (!c) break; resetDraft(); fillFromMatch({name:c.name, ph:c.ph, email:c.email, cars:c.cars.map(x => ({reg:x.reg, model:x.model, color:x.color, seg:x.seg}))}); saveDraft(true); go('new'); toast('Customer details filled in'); break; }
     case 'printjob': printJob(); break;
     case 'doprintjob': { const j = S.data && S.data.job; closeModal(); if (j) printHTML(jobPaper(j, S.biz, S.data.qr, j.sig ? upUrl(j.sig) : ''), 'A5'); break; }
-    case 'printinv': { const c = S.data && S.data.cur; if (c) printHTML(invPaper(c.inv, S.biz, c.qr), 'A4'); break; }
+    case 'printinv': { const c = S.data && S.data.cur; if (c) printHTML(invPaper(c.inv, S.biz, c.qr, S.invoice.terms), 'A4'); break; }
     /* whatsapp */
     case 'wa': openWA(d.k, d); break;
     case 'wasend': {
@@ -864,8 +947,24 @@ document.addEventListener('click', async e => {
     case 'delstaff': confirmBox('Remove from team?', `${esc(d.id)} won't show up when assigning new job cards. Old job cards keep the name.`, 'Remove', 'delstaffok', {id:d.id}); break;
     case 'delstaffok': { closeModal(); const r = await act(() => put('/api/settings/staff', {staff:S.staff.filter(s => s.n !== d.id)}), 'Removed from the team'); if (r){ S.staff = r.staff; render(); } break; }
     case 'adduser': userModal(); break;
+    /* super admin */
+    case 'editjob': openEditJob(); break;
+    case 'ejrm': S.ej.lines.splice(+d.i, 1); ejRefresh(); break;
+    case 'ejadd': { const id = $('#ej-add').value, s = svc(id); if (s){ S.ej.lines.push({id, name:s.perSq ? 'PPF · selected panels' : s.name, amt:s.perSq ? 0 : s.p[S.ej.seg]}); ejRefresh(); } break; }
+    case 'ejcustom': S.ej.lines.push({id:'custom', name:'', amt:0}); ejRefresh(); { const ins = document.querySelectorAll('[data-ejl$=":name"]'); if (ins.length) ins[ins.length - 1].focus(); } break;
+    case 'ejteam': { const t = S.ej.team; S.ej.team = t.includes(d.v) ? t.filter(x => x !== d.v) : [...t, d.v]; el.classList.toggle('on'); el.setAttribute('aria-pressed', String(S.ej.team.includes(d.v))); break; }
+    case 'ejsave': ejSave(); break;
+    case 'editcust': openEditCust(); break;
+    case 'ecsave': { const r = await act(() => put(`/api/customers/${S.ec.id}`, S.ec), 'Customer updated'); if (r){ closeModal(); S.ec = null; load(false); } break; }
+    case 'invsave': {
+      const prefix = ($('#inv-prefix').value || '').trim(), terms = ($('#inv-terms').value || '').split('\n').map(x => x.trim()).filter(Boolean);
+      const r = await act(() => put('/api/settings/invoice', {prefix, terms}), 'Invoice settings saved'); if (r){ S.invoice = r.invoice; render(); } break;
+    }
+    case 'catadd': S.catEdit.push({from:'', to:''}); render(); { const ins = document.querySelectorAll('[data-cat]'); if (ins.length) ins[ins.length - 1].focus(); } break;
+    case 'catrm': S.catEdit.splice(+d.i, 1); render(); break;
+    case 'catsave': { const r = await act(() => put('/api/settings/cats', {cats:S.catEdit}), 'Categories saved'); if (r){ S.cats = r.cats; S.catalog = r.catalog; S.catEdit = null; render(); } break; }
     case 'resetpw': resetPwModal(d.id, d.name); break;
-    case 'close': S.after = null; closeModal(); break;
+    case 'close': S.after = null; S.ej = null; S.ec = null; closeModal(); break;
     case 'scrim': if (e.target === el){ S.after = null; closeModal(); } break;
   }
 });
@@ -914,6 +1013,22 @@ document.addEventListener('input', e => {
   if (ds.biz){ S.biz[ds.biz] = t.value; const st = $('#biz-state'); if (st) st.textContent = 'Saving…'; saveBiz(); return; }
   if (ds.price){ const [id, i] = ds.price.split(':'), s = svc(id); if (s){ (s.perSq || s.p)[+i] = +digits(t.value) || 0; const st = $('#price-state'); if (st) st.textContent = 'Saving…'; savePrices(); } return; }
   if (t.id === 'perm-disc'){ S.perms.disc = Math.min(100, +digits(t.value) || 0); savePerms(); return; }
+  if (S.ej && (ds.ej || ds.ejs || ds.ejl || ds.ejp || ds.ejc)){
+    const e = S.ej;
+    if (ds.ej) e.f[ds.ej] = t.value;
+    if (ds.ejp) e.ppf[ds.ejp] = t.value;
+    if (ds.ejc) e.coat[ds.ejc] = t.value;
+    if (ds.ejl){ const [i, k] = ds.ejl.split(':'); if (e.lines[+i]) e.lines[+i][k] = k === 'amt' ? digits(t.value) : t.value; }
+    if (ds.ejs){ const k = ds.ejs; e[k] = k === 'seg' ? +t.value : k === 'disc' ? Math.min(100, +digits(t.value) || 0) : t.value; if (k === 'due' && !validDT(t.value)) e.due = S.data.job.due; }
+    const tt = $('#ej-total'); if (tt) tt.textContent = ejTotalText();
+    return;
+  }
+  if (S.ec && (ds.ec || ds.ecc)){
+    if (ds.ec) S.ec[ds.ec] = t.value;
+    if (ds.ecc){ const [i, k] = ds.ecc.split(':'); if (S.ec.cars[+i]) S.ec.cars[+i][k] = t.value; }
+    return;
+  }
+  if (ds.cat !== undefined && S.catEdit){ const c = S.catEdit[+ds.cat]; if (c) c.to = t.value; return; }
 });
 document.addEventListener('change', async e => {
   const t = e.target, ds = t.dataset || {};

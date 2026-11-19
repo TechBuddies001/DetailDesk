@@ -187,8 +187,11 @@ function suggestDue(svcs, cat){
 }
 
 /* ================= printable papers (invoice A4, job card A5) ================= */
+const DEFAULT_TERMS = ['Please check the car at delivery. Claims after delivery are not accepted.', 'Warranty as shown above. Keep this invoice.'];
+const FIXED_CATS = ['PPF', 'Coating']; // PPF and coating details depend on these two names
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1A1A1A"/><path d="M16 5.5c4.2 5.6 7.2 9.3 7.2 12.9a7.2 7.2 0 0 1-14.4 0c0-3.6 3-7.3 7.2-12.9z" fill="#FFFFFF"/></svg>`;
-function invPaper(v, biz, qr){
+function invPaper(v, biz, qr, terms){
+  const tl = Array.isArray(terms) && terms.length ? terms : DEFAULT_TERMS;
   const t = invTot(v), paid = paidOf(v), bal = balOf(v), b = biz;
   return `<div class="paper">
     ${v.cancelled ? '<div class="stamp void">CANCELLED</div>' : bal <= 0 ? '<div class="stamp">PAID</div>' : ''}
@@ -213,7 +216,7 @@ function invPaper(v, biz, qr){
         <tr><td><b>Balance</b></td><td><b>${f2(Math.max(0, bal))}</b></td></tr>
       </tbody></table>
     </div>
-    <div class="pv-bottom"><ol><li>Please check the car at delivery. Claims after delivery are not accepted.</li><li>Warranty as shown above. Keep this invoice.</li></ol>
+    <div class="pv-bottom"><ol>${tl.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
       ${bal > 0 && qr && b.upi ? `<div class="qr">${qr}<span>Scan to pay ${inr(bal)} · ${esc(b.upi)}</span></div>` : '<div></div>'}
       <div class="sign"><div>For ${esc(b.name)}</div></div></div>
   </div>`;
@@ -237,5 +240,5 @@ function jobPaper(j, biz, qr, sigUrl){
 if (typeof module !== 'undefined' && module.exports){
   module.exports = {esc, inr, f2, digits, fmtPh, norm, hit, pad, MON, isoD, isoDT, parseDT, validDT, todayS, isToday, fD, fDY, fDT, fTime, fyOf,
     SEGS, SEGF, CATS, CATALOG0, COVER, PANELS, PANEL, FRONT_KIT, DMG, BEL, SLOTS, TERMS, PAY_MODES,
-    svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, invPaper, jobPaper};
+    DEFAULT_TERMS, FIXED_CATS, svcIn, hasCatIn, ppfPanelsOf, sqOf, coverLabel, linesFor, totals, jobTot, invTot, paidOf, balOf, shortName, warrOf, words, suggestDue, invPaper, jobPaper};
 }
