@@ -55,9 +55,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS jobs (id VARCHAR(16) NOT NULL PRIMARY KEY, seq INT NOT NULL UNIQUE, customer_id INT NOT NULL, vehicle_id INT NOT NULL, status VARCHAR(8) NOT NULL,
     created VARCHAR(16) NOT NULL, token CHAR(24) NOT NULL UNIQUE, doc MEDIUMTEXT NOT NULL, KEY jobs_status (status, created), KEY jobs_customer (customer_id),
     CONSTRAINT jobs_customer_fk FOREIGN KEY (customer_id) REFERENCES customers(id), CONSTRAINT jobs_vehicle_fk FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)) ${T}`,
-  `CREATE TABLE IF NOT EXISTS invoices (inv_no VARCHAR(24) NOT NULL PRIMARY KEY, fy CHAR(5) NOT NULL, seq INT NOT NULL, inv_date VARCHAR(16) NOT NULL, job_id VARCHAR(16) NULL,
+  `CREATE TABLE IF NOT EXISTS invoices (inv_no VARCHAR(24) NOT NULL PRIMARY KEY, series VARCHAR(8) NOT NULL DEFAULT 'inv', fy CHAR(5) NOT NULL, seq INT NOT NULL, inv_date VARCHAR(16) NOT NULL, job_id VARCHAR(16) NULL,
     customer_id INT NOT NULL, token CHAR(24) NOT NULL UNIQUE, cancelled TINYINT NOT NULL DEFAULT 0, total INT NOT NULL, doc MEDIUMTEXT NOT NULL,
-    UNIQUE KEY invoices_series (fy, seq), KEY invoices_customer (customer_id), KEY invoices_date (inv_date), KEY invoices_job (job_id)) ${T}`,
+    UNIQUE KEY invoices_series (series, fy, seq), KEY invoices_customer (customer_id), KEY invoices_date (inv_date), KEY invoices_job (job_id)) ${T}`,
   `CREATE TABLE IF NOT EXISTS payments (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, job_id VARCHAR(16) NULL, invoice_no VARCHAR(24) NULL, amt INT NOT NULL, pay_mode VARCHAR(8) NOT NULL,
     paid_at VARCHAR(16) NOT NULL, note VARCHAR(40) NOT NULL DEFAULT '', user_id INT NULL, KEY payments_invoice (invoice_no), KEY payments_job (job_id), KEY payments_at (paid_at)) ${T}`,
   `CREATE TABLE IF NOT EXISTS job_log (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, job_id VARCHAR(16) NOT NULL, at_time VARCHAR(16) NOT NULL, msg VARCHAR(255) NOT NULL, user_id INT NULL, KEY job_log_job (job_id)) ${T}`,
@@ -69,12 +69,15 @@ const DEFAULTS = {
   catalog:S.CATALOG0,
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],
   staff:[],
-  invoice:{prefix:'INV', terms:S.DEFAULT_TERMS},
+  invoice:{prefix:'INV', billPrefix:'BILL', terms:S.DEFAULT_TERMS},
   cats:S.CATS.slice(1),
   wa:S.WA_DEFAULTS_HI
 };
 async function init(){
   for (const s of SCHEMA) await pool.query(s);
+  // Upgrade: GST invoices and bills without GST get separate number series (GST rules want the tax invoice series unbroken).
+  if (!(await all("SHOW COLUMNS FROM invoices LIKE 'series'")).length)
+    await pool.query("ALTER TABLE invoices ADD COLUMN series VARCHAR(8) NOT NULL DEFAULT 'inv' AFTER inv_no, DROP INDEX invoices_series, ADD UNIQUE KEY invoices_series (series, fy, seq)");
   for (const [k, v] of Object.entries(DEFAULTS)) await pool.query('INSERT IGNORE INTO kv (k, v) VALUES (?, ?)', [k, JSON.stringify(v)]);
   // One-time upgrade: the first owner login becomes the Super Admin if there isn't one yet.
   if (!(await one("SELECT id FROM users WHERE role = 'superadmin' LIMIT 1"))){

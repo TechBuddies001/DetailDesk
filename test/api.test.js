@@ -303,3 +303,57 @@ test('adding a service: managers can from a job card unless the owner turns it o
   // older screens that don't send the switch leave it on
   const {addsvc, ...old} = perms; r = await owner.put('/api/settings/perms', old); assert.equal(r.data.perms.addsvc, true);
 });
+
+test('billing: choose GST invoice or bill without GST; each has its own number series', async () => {
+  const fy = S.fyOf(S.isoDT(new Date()));
+  const mk = async over => {
+    let r = await owner.post('/api/jobs', wizard({f:{...wizard().f, reg:'UK 07 GS ' + (1000 + Math.floor(Math.random() * 8999))}, svcs:['pc-1'], seg:1, disc:0, adv:0, ...over})); assert.equal(r.status, 200, JSON.stringify(r.data));
+    const id = r.data.id; r = await owner.post(`/api/jobs/${id}/ready`); assert.equal(r.status, 200);
+    return (await owner.get('/api/jobs/' + id)).data.job;
+  };
+  const gpre = (await owner.get('/api/boot')).data.invoice.prefix, before = await D.peekNum('inv:' + fy);
+  // without GST: BILL series, no tax, job card follows
+  let j = await mk({adv:100});
+  assert.equal(j.gst, true, 'job card starts with GST from settings');
+  let r = await owner.post(`/api/jobs/${j.id}/invoice`, {gst:false}); assert.equal(r.status, 200);
+  assert.equal(r.data.no, `BILL/${fy}/0001`);
+  let v = (await owner.get('/api/invoice?no=' + encodeURIComponent(r.data.no))).data.inv;
+  assert.equal(v.gst, false); assert.equal(S.invTot(v).total, S.totals(j.lines, 0, false).total); assert.equal(S.paidOf(v), 100);
+  assert.equal((await owner.get('/api/jobs/' + j.id)).data.job.gst, false);
+  let html = await (await fetch(base + '/i/' + v.token)).text();
+  assert.doesNotMatch(html, /CGST|TAX INVOICE|GSTIN/); assert.match(html, />INVOICE</);
+  // with GST (default = job card's choice): INV series carries on unbroken
+  j = await mk({});
+  r = await owner.post(`/api/jobs/${j.id}/invoice`); assert.equal(r.status, 200);
+  assert.equal(r.data.no, `${gpre}/${fy}/${String(before + 1).padStart(4, '0')}`, 'GST series carries on with no gap');
+  v = (await owner.get('/api/invoice?no=' + encodeURIComponent(r.data.no))).data.inv; assert.equal(v.gst, true);
+  // managers can choose too; the second bill continues its own series
+  const m4 = client(); await owner.post('/api/users', {name:'Bill Staff', login:'9844455566', password:'staff123'});
+  await m4.post('/api/login', {login:'9844455566', password:'staff123'});
+  j = await mk({});
+  r = await m4.post(`/api/jobs/${j.id}/invoice`, {gst:false}); assert.equal(r.status, 200); assert.equal(r.data.no, `BILL/${fy}/0002`);
+  // advance bigger than the bill without GST: stopped, GST invoice still possible
+  j = await mk({}); const full = S.totals(j.lines, 0, true).total;
+  j = await mk({adv:full});
+  r = await owner.post(`/api/jobs/${j.id}/invoice`, {gst:false}); assert.equal(r.status, 400); assert.match(r.data.error, /advance/i);
+  r = await owner.post(`/api/jobs/${j.id}/invoice`, {gst:true}); assert.equal(r.status, 200);
+  // prefixes: must differ; a new bill prefix is used from the next bill
+  r = await owner.put('/api/settings/invoice', {prefix:gpre, billPrefix:gpre.toLowerCase(), terms:[]}); assert.equal(r.status, 400);
+  r = await owner.put('/api/settings/invoice', {prefix:gpre, billPrefix:'est', terms:[]}); assert.equal(r.status, 200); assert.equal(r.data.invoice.billPrefix, 'EST');
+  r = await owner.put('/api/settings/invoice', {prefix:gpre, terms:[]}); assert.equal(r.data.invoice.billPrefix, 'EST', 'older screens keep the bill prefix');
+  j = await mk({});
+  r = await owner.post(`/api/jobs/${j.id}/invoice`, {gst:false}); assert.equal(r.data.no, `EST/${fy}/0003`);
+});
+
+test('upgrade: an older invoices table gets the bill series column, old invoices kept', async () => {
+  // an old install only ever had the one (GST) series
+  await D.pool.query("DELETE FROM payments WHERE invoice_no IN (SELECT inv_no FROM invoices WHERE series <> 'inv')");
+  await D.pool.query("DELETE FROM invoices WHERE series <> 'inv'");
+  const n = (await D.one('SELECT COUNT(*) AS n FROM invoices')).n; assert.ok(n > 0);
+  await D.pool.query("ALTER TABLE invoices DROP INDEX invoices_series, DROP COLUMN series, ADD UNIQUE KEY invoices_series (fy, seq)");
+  await D.init();
+  const cols = await D.all("SHOW COLUMNS FROM invoices LIKE 'series'"); assert.equal(cols.length, 1);
+  assert.equal((await D.one('SELECT COUNT(*) AS n FROM invoices')).n, n);
+  const idx = await D.all("SHOW INDEX FROM invoices WHERE Key_name = 'invoices_series'"); assert.deepEqual(idx.map(x => x.Column_name), ['series', 'fy', 'seq']);
+  await D.init(); // running again changes nothing
+});

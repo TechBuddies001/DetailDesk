@@ -16,7 +16,8 @@ It has three kinds of login:
   5. Bay & team: suggested delivery time and priority.
 - **Job flow:** in progress → mark ready → invoice & deliver. Every step is logged with who did it.
 - **GST invoices:**
-  - Numbered per financial year, like `INV/26-27/0001`.
+  - When making each invoice, pick **with GST** (tax invoice) or **without GST**. The job card's setting is the starting choice.
+  - Numbered per financial year, like `INV/26-27/0001`. Bills without GST have their own series, like `BILL/26-27/0001`, so the GST invoice numbers stay unbroken.
   - CGST/SGST with SAC codes, round off, amount in words, warranty lines.
   - Prints on A4. The job card prints on A5.
   - Each invoice has a customer link (`/i/<token>`) where the customer can view it, save it as PDF and pay by UPI (link and QR).
@@ -35,7 +36,7 @@ It has three kinds of login:
 - Add Owner logins, and reset or turn off any login.
 - Edit a job card before its invoice: customer and car details, services and prices (custom lines too), discount, bay, team and delivery.
 - Edit customer and car details. Open job cards update too; invoices keep what was printed.
-- Change the invoice number prefix (numbering continues) and the terms printed on invoices.
+- Change the invoice number prefixes for GST invoices and for bills without GST (numbering continues) and the terms printed on invoices.
 - Add, rename or remove service categories. PPF and Coating stay fixed.
 - Edit every WhatsApp message (job card, update, car ready, invoice, payment reminder, estimate, customer message). There is a live preview, and one click brings back the Hinglish or English defaults. Words in `{curly brackets}` are filled in by the app; a line whose word has nothing to fill is left out.
 

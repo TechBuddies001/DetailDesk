@@ -162,15 +162,20 @@ async function makeInvoice(user, id, opts = {}){
     const row = await one('SELECT * FROM jobs WHERE id = ? FOR UPDATE', [id], c), j = jobFromRow(row); if (!j) fail('Job card not found', 404);
     if (j.inv) fail('This job card already has an invoice');
     if (j.status !== 'ready') fail('Mark the car as ready before making the invoice');
-    const prefix = ((await getKV('invoice', {}, c)) || {}).prefix || 'INV';
-    const seq = await nextNum(c, `inv:${fy}`), no = `${prefix}/${fy}/${pad4(seq)}`;
-    const inv = {cust:j.cust, ph:j.ph, car:j.car, reg:j.reg, seg:j.seg, odo:j.odo, lines:j.lines, disc:j.disc, gst:j.gst, warr:S.warrOf(j, at)};
-    await run('INSERT INTO invoices (inv_no, fy, seq, inv_date, job_id, customer_id, token, cancelled, total, doc) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
-      [no, fy, seq, at, id, row.customer_id, token(12), S.totals(j.lines, j.disc, j.gst).total, JSON.stringify(inv)], c);
+    // GST is chosen at billing (default: what the job card had). Bills without GST get their own number series.
+    const gst = opts.gst === undefined ? !!j.gst : !!opts.gst, total = S.totals(j.lines, j.disc, gst).total;
+    const [[pr]] = await c.query('SELECT COALESCE(SUM(amt), 0) AS paid FROM payments WHERE job_id = ? AND invoice_no IS NULL', [id]);
+    if (Number(pr.paid) > total) fail(`The advance (${S.inr(Number(pr.paid))}) is more than this bill (${S.inr(total)}). Make it with GST instead.`);
+    const set = (await getKV('invoice', {}, c)) || {}, series = gst ? 'inv' : 'bill';
+    const prefix = gst ? set.prefix || 'INV' : set.billPrefix || 'BILL';
+    const seq = await nextNum(c, `${series}:${fy}`), no = `${prefix}/${fy}/${pad4(seq)}`;
+    const inv = {cust:j.cust, ph:j.ph, car:j.car, reg:j.reg, seg:j.seg, odo:j.odo, lines:j.lines, disc:j.disc, gst, warr:S.warrOf(j, at)};
+    await run('INSERT INTO invoices (inv_no, series, fy, seq, inv_date, job_id, customer_id, token, cancelled, total, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
+      [no, series, fy, seq, at, id, row.customer_id, token(12), total, JSON.stringify(inv)], c);
     await run('UPDATE payments SET invoice_no = ? WHERE job_id = ? AND invoice_no IS NULL', [no, id], c);
-    const doc = docOf(j); doc.inv = no; doc.doneAt = at; if (!doc.readyAt) doc.readyAt = at;
+    const doc = docOf(j); doc.inv = no; doc.doneAt = at; doc.gst = gst; if (!doc.readyAt) doc.readyAt = at;
     await run('UPDATE jobs SET status = ?, doc = ? WHERE id = ?', ['done', JSON.stringify(doc), id], c);
-    await log(c, id, at, `Invoice ${no} made by ${whoName(user)} · car delivered`, user.id);
+    await log(c, id, at, `${gst ? 'GST invoice' : 'Bill without GST'} ${no} made by ${whoName(user)} · car delivered`, user.id);
     return no;
   });
 }
@@ -344,7 +349,10 @@ app.get('/api/jobs/:id', async (req, res) => {
 });
 app.post('/api/jobs', async (req, res) => res.json({id:await createJob(req.user, req.body, {discLimit:await discLimit(req)})}));
 app.post('/api/jobs/:id/ready', async (req, res) => { await markReady(req.user, String(req.params.id)); res.json({ok:true}); });
-app.post('/api/jobs/:id/invoice', async (req, res) => res.json({no:await makeInvoice(req.user, String(req.params.id))}));
+app.post('/api/jobs/:id/invoice', async (req, res) => {
+  const b = obj(req.body);
+  res.json({no:await makeInvoice(req.user, String(req.params.id), {gst:b.gst === undefined ? undefined : bool(b.gst)})});
+});
 app.post('/api/jobs/:id/log', async (req, res) => {
   const id = String(req.params.id); if (!await getJobRow(id)) fail('Job card not found', 404);
   const text = str(obj(req.body).text, 200, 'Note'); if (!text) fail('Empty note');
@@ -541,8 +549,11 @@ app.post('/api/users/:id/active', adminOnly, async (req, res) => {
 app.put('/api/settings/invoice', superOnly, async (req, res) => {
   const b = obj(req.body), prefix = str(b.prefix, 10, 'Invoice prefix').toUpperCase();
   if (!/^[A-Z0-9-]{1,10}$/.test(prefix)) fail('Invoice prefix: 1 to 10 letters, numbers or -');
+  const old = await getKV('invoice', {}), billPrefix = (b.billPrefix === undefined ? old.billPrefix || 'BILL' : str(b.billPrefix, 10, 'Bill prefix')).toUpperCase();
+  if (!/^[A-Z0-9-]{1,10}$/.test(billPrefix)) fail('Prefix for bills without GST: 1 to 10 letters, numbers or -');
+  if (billPrefix === prefix) fail('Bills without GST need a different prefix from GST invoices');
   const terms = arr(b.terms).map(x => str(x, 200, 'Each invoice term')).filter(Boolean).slice(0, 8);
-  const invoice = {prefix, terms:terms.length ? terms : S.DEFAULT_TERMS};
+  const invoice = {prefix, billPrefix, terms:terms.length ? terms : S.DEFAULT_TERMS};
   await setKV('invoice', invoice); res.json({ok:true, invoice});
 });
 app.put('/api/settings/wa', superOnly, async (req, res) => {

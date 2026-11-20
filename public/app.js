@@ -8,6 +8,8 @@ const isSuper = () => !!S.me && S.me.role === 'superadmin';
 const roleName = r => ({superadmin:'Super Admin', admin:'Owner · Admin', manager:'Manager'})[r] || r;
 const myRole = () => isSuper() ? 'Super Admin' : isAdmin() ? 'Admin' : 'Manager';
 const canSales = () => isAdmin() || !!S.perms.sales;
+// Short invoice number that keeps the series: INV/26-27/0004 → INV-0004, BILL/26-27/0002 → BILL-0002.
+const shortNo = no => { const p = String(no || '').split('/'); return p.length > 2 ? `${p[0]}-${p[p.length - 1]}` : String(no || ''); };
 const canAddSvc = () => isAdmin() || S.perms.addsvc !== false;
 const discLimit = () => isAdmin() ? 100 : Math.max(0, Math.min(100, +S.perms.disc || 0));
 const svc = id => svcIn(S.catalog, id);
@@ -147,7 +149,7 @@ function vHome(d){
     <div class="stack16">
       <section class="card"><div class="card-h"><h3>Payments pending</h3><button class="link" data-act="go" data-view="invoices" data-tab="unpaid">Invoices ${ico('arrow')}</button></div>
         ${d.due.length ? `<ul class="list">${d.due.map(v => `<li data-act="go" data-view="invoices" data-no="${esc(v.no)}">
-          <div class="grow"><div class="t">${esc(v.cust)}</div><div class="s">${esc(v.car)} · ${esc(v.no.slice(-4))} · ${esc(fD(v.date))}</div></div>
+          <div class="grow"><div class="t">${esc(v.cust)}</div><div class="s">${esc(v.car)} · ${esc(shortNo(v.no))} · ${esc(fD(v.date))}</div></div>
           <div class="r"><b class="num">${inr(v.bal)}</b><button class="btn sm" data-act="wa" data-k="due" data-no="${esc(v.no)}">${ico('chat')} Remind</button></div></li>`).join('')}</ul>` : `<div class="empty">Nothing pending.</div>`}
       </section>
       ${d.sales ? `<section class="card"><div class="card-h"><h3>Top services · ${MON[now.getMonth()]}</h3></div><div class="card-b">${d.sales.tops.length ? `<div class="hbars">${d.sales.tops.map(([n, v]) => `<div class="hb"><span class="hb-l">${esc(n)}</span><span class="hb-t"><i style="width:${Math.max(4, v / d.sales.tops[0][1] * 100)}%"></i></span><span class="hb-v">${inr(v)}</span></div>`).join('')}</div>` : '<p class="small muted">No invoices this month yet.</p>'}</div></section>` : ''}
@@ -177,7 +179,7 @@ function vJob(d){
     done:`<button class="btn" data-act="printjob">${ico('print')} Print job card</button>${inv ? `<button class="btn pri" data-act="go" data-view="invoices" data-no="${esc(inv.no)}">${ico('bill')} Open invoice</button>` : ''}`
   }[j.status];
   const stIdx = {work:1, ready:2, done:3}[j.status];
-  const steps = [['Checked in', fDT(j.in)], ['Work in ' + (j.bay || 'workshop'), j.status === 'work' ? `Due ${fDT(j.due)}` : 'Done'], ['Ready', j.readyAt ? fDT(j.readyAt) : 'Customer is told on WhatsApp'], ['Delivered', j.doneAt ? `${fDT(j.doneAt)}${inv ? ' · invoice ' + inv.no.slice(-4) : ''}` : 'After the invoice']];
+  const steps = [['Checked in', fDT(j.in)], ['Work in ' + (j.bay || 'workshop'), j.status === 'work' ? `Due ${fDT(j.due)}` : 'Done'], ['Ready', j.readyAt ? fDT(j.readyAt) : 'Customer is told on WhatsApp'], ['Delivered', j.doneAt ? `${fDT(j.doneAt)}${inv ? ' · invoice ' + shortNo(inv.no) : ''}` : 'After the invoice']];
   const cls = i => i < stIdx || j.status === 'done' ? 'done' : i === stIdx ? 'now' : 'todo';
   const marks = Object.entries(j.dmg || {}).filter(([id, x]) => PANEL[id] && DMG[x]);
   const photos = SLOTS.filter(s => j.photos && j.photos[s]);
@@ -493,7 +495,7 @@ function vInvoices(d){
     <section class="card">
       <div class="tabs" role="tablist"><button class="tab" role="tab" aria-selected="${S.invTab === 'all'}" data-act="itab" data-tab="all">All<span class="c">${d.counts.all}</span></button><button class="tab" role="tab" aria-selected="${S.invTab === 'unpaid'}" data-act="itab" data-tab="unpaid">Payment pending<span class="c">${d.counts.unpaid}</span></button></div>
       ${d.list.length ? `<ul class="list">${d.list.map(x => `<li data-act="pickinv" data-no="${esc(x.no)}" class="${v && x.no === v.no ? 'on' : ''}">
-        <div class="grow"><div class="t">${esc(x.cust)}</div><div class="s"><span class="mono">${esc(x.no.slice(-4))}</span> · ${esc(fD(x.date))} · ${esc(x.reg)}</div></div>
+        <div class="grow"><div class="t">${esc(x.cust)}</div><div class="s"><span class="mono">${esc(shortNo(x.no))}</span> · ${esc(fD(x.date))} · ${esc(x.reg)}</div></div>
         <div class="r"><b class="num">${inr(x.total)}</b>${invChip(x)}</div></li>`).join('')}</ul>` : `<div class="empty">${q ? `No invoices match “${esc(q)}”.` : S.invTab === 'unpaid' ? 'No pending payments.' : 'No invoices yet. Invoices are made from a job card once the car is ready.'}</div>`}
     </section>
     <div style="min-width:0">${v ? `
@@ -528,7 +530,7 @@ function vCustomers(d){
         <h4 class="sub-h">Warranties</h4>${c.warr.length ? c.warr.map(w => `<div class="note info">${ico('shield')}<span>${esc(w)}</span></div>`).join('') : '<p class="small muted">No PPF or coating warranty on record.</p>'}
         <h4 class="sub-h">History</h4>
         <ul class="list" style="margin:0 -16px -16px">${[...c.jobs.map(j => `<li data-act="go" data-view="job" data-id="${esc(j.id)}"><div class="grow"><div class="t">${esc(j.names)}</div><div class="s">${esc(j.id)} · ${esc(fD(j.in))}</div></div>${stChip(j.status)}</li>`),
-          ...c.invs.map(v => `<li data-act="go" data-view="invoices" data-no="${esc(v.no)}"><div class="grow"><div class="t">${esc(v.names)}</div><div class="s">Invoice ${esc(v.no.slice(-4))} · ${esc(fD(v.date))}</div></div><div class="r"><b class="num">${inr(v.total)}</b>${v.cancelled ? chip('Cancelled', 'bad') : v.bal <= 0 ? chip('Paid', 'ok') : chip('Due ' + inr(v.bal), 'warn')}</div></li>`)].join('') || '<li class="muted">No visits yet</li>'}</ul>
+          ...c.invs.map(v => `<li data-act="go" data-view="invoices" data-no="${esc(v.no)}"><div class="grow"><div class="t">${esc(v.names)}</div><div class="s">Invoice ${esc(shortNo(v.no))} · ${esc(fD(v.date))}</div></div><div class="r"><b class="num">${inr(v.total)}</b>${v.cancelled ? chip('Cancelled', 'bad') : v.bal <= 0 ? chip('Paid', 'ok') : chip('Due ' + inr(v.bal), 'warn')}</div></li>`)].join('') || '<li class="muted">No visits yet</li>'}</ul>
       </div></section>` : ''}
   </div>`;
 }
@@ -550,7 +552,7 @@ function vSettings(d){
       <div class="field"><label for="b-gstin">GSTIN</label><input class="inp up" id="b-gstin" data-biz="gstin" value="${esc(b.gstin)}" maxlength="15"></div>
       <div class="field"><label for="b-upi">UPI ID (for the pay QR on invoices)</label><input class="inp" id="b-upi" data-biz="upi" value="${esc(b.upi)}" placeholder="yourname@bank"></div>
     </div>
-    <div class="swrow" style="margin-top:8px"><div><div class="t">Add GST on new job cards and invoices</div><div class="s">CGST 9% + SGST 9% with SAC codes. Turn off if you are not GST registered.</div></div><input type="checkbox" class="sw" data-bizsw="gst" ${b.gst ? 'checked' : ''} aria-label="Add GST"></div>
+    <div class="swrow" style="margin-top:8px"><div><div class="t">GST on new job cards</div><div class="s">CGST 9% + SGST 9% with SAC codes. This is the starting choice: when making each invoice you can still pick with or without GST.</div></div><input type="checkbox" class="sw" data-bizsw="gst" ${b.gst ? 'checked' : ''} aria-label="Add GST"></div>
     <p class="small muted" id="biz-state">Changes save automatically.</p>
   </div></section>`;
   if (t === 'prices') body = `<section class="card"><div class="card-h"><h3>Price list</h3><button class="btn sm" data-act="addsvc">${ico('plus')} Add service</button></div>
@@ -581,7 +583,8 @@ function vSettings(d){
     if (!S.catEdit) S.catEdit = S.cats.map(c => ({from:c, to:c}));
     const fy = fyOf(isoDT(new Date()));
     body = `<section class="card"><div class="card-h"><h3>Invoice</h3></div><div class="card-b stack">
-      <div class="field"><label for="inv-prefix">Invoice number prefix</label><input class="inp up" id="inv-prefix" value="${esc(S.invoice.prefix)}" maxlength="10" style="max-width:200px"><span class="hint" id="inv-prefix-hint">Next invoices look like ${esc(S.invoice.prefix)}/${fy}/0012. Numbering continues; only the prefix changes.</span></div>
+      <div class="field"><label for="inv-prefix">Prefix for GST invoices</label><input class="inp up" id="inv-prefix" value="${esc(S.invoice.prefix)}" maxlength="10" style="max-width:200px"><span class="hint" id="inv-prefix-hint">GST invoices look like ${esc(S.invoice.prefix)}/${fy}/0012. Numbering continues; only the prefix changes.</span></div>
+      <div class="field"><label for="inv-bprefix">Prefix for bills without GST</label><input class="inp up" id="inv-bprefix" value="${esc(S.invoice.billPrefix || 'BILL')}" maxlength="10" style="max-width:200px"><span class="hint">Bills without GST look like ${esc(S.invoice.billPrefix || 'BILL')}/${fy}/0003. They have their own numbering, so GST invoice numbers stay unbroken.</span></div>
       <div class="field"><label for="inv-terms">Terms printed on every invoice (one per line, up to 8)</label><textarea class="inp" id="inv-terms" rows="4">${esc(S.invoice.terms.join('\n'))}</textarea></div>
       <div><button class="btn pri" data-act="invsave">${ico('check')} Save invoice settings</button></div>
     </div></section>
@@ -764,6 +767,23 @@ function modal(html, cls = ''){ $('#modal-root').innerHTML = `<div class="scrim"
 function closeModal(){ $('#modal-root').innerHTML = ''; }
 let tt;
 function toast(t){ const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(tt); tt = setTimeout(() => { el.hidden = true; }, 4000); }
+// Billing: choose a GST invoice or a bill without GST. Each has its own number series.
+function invModal(){
+  const j = S.data && S.data.job, pick = S.invPick; if (!j || !pick) return;
+  const paid = +j.paid || 0, fy = fyOf(isoDT(new Date())), pre = {true:S.invoice.prefix || 'INV', false:S.invoice.billPrefix || 'BILL'};
+  const opt = g => {
+    const t = totals(j.lines, j.disc, g), ok = paid <= t.total, on = pick.gst === g;
+    return `<button class="svc ${on ? 'on' : ''}" role="radio" aria-checked="${on}" data-act="invgst" data-v="${g ? 1 : 0}" ${ok ? '' : 'disabled'}><span class="cb">${on ? ico('check') : ''}</span>
+      <span class="svc-t"><b>${g ? 'With GST · tax invoice' : 'Without GST'}</b><span>${g ? `CGST 9% + SGST 9% on ${inr(t.taxable)}` : 'No tax added'} · number ${esc(pre[g])}/${fy}/…${ok ? '' : ` · advance ${inr(paid)} is more than this`}</span></span><span class="svc-p">${inr(t.total)}</span></button>`;
+  };
+  const t = totals(j.lines, j.disc, pick.gst);
+  modal(`<div class="mh"><h3>Make invoice and deliver?</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p class="small muted">The advance is adjusted and the car is marked delivered.</p>
+    <div class="stack" role="radiogroup" aria-label="GST on this invoice">${opt(true)}${opt(false)}</div>
+    <dl class="spec"><div><dt>Bill total</dt><dd>${inr(t.total)}</dd></div><div><dt>Advance paid</dt><dd>${inr(paid)}</dd></div><div><dt>Balance</dt><dd>${inr(Math.max(0, t.total - paid))}</dd></div></dl>
+    ${pick.gst && !S.biz.gstin ? `<div class="note warn">${ico('alert')}<span>Add your GSTIN in Settings → Business & GST so it prints on the invoice.</span></div>` : ''}
+    <div class="m-row"><button class="btn" data-act="close">Keep</button><button class="btn pri" data-act="mkinvok">${ico('bill')} ${pick.gst ? 'Make GST invoice' : 'Make bill without GST'}</button></div>`);
+}
 function confirmBox(title, body, okLabel, actName, data = {}){
   modal(`<div class="mh"><h3>${title}</h3><button class="x" data-act="close" aria-label="Close">×</button></div><p>${body}</p>
     <div class="m-row"><button class="btn" data-act="close">Keep</button><button class="btn pri" data-act="${actName}" ${Object.entries(data).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ')}>${okLabel}</button></div>`);
@@ -771,7 +791,7 @@ function confirmBox(title, body, okLabel, actName, data = {}){
 function payModal(no){
   const v = S.data && S.data.cur && S.data.cur.inv; if (!v || v.no !== no) return;
   S.payMode = 'UPI';
-  modal(`<div class="mh"><div><p class="eyebrow">${esc(v.cust)} · ${esc(v.no.slice(-4))}</p><h3>Record payment</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+  modal(`<div class="mh"><div><p class="eyebrow">${esc(v.cust)} · ${esc(shortNo(v.no))}</p><h3>Record payment</h3></div><button class="x" data-act="close" aria-label="Close">×</button></div>
     <div class="field"><label for="f-pay">Amount (₹) · balance ${inr(balOf(v))}</label><input class="inp" id="f-pay" value="${balOf(v)}" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><span class="lbl">Mode</span><div><div class="seg" id="pay-seg">${PAY_MODES.map(x => `<button aria-pressed="${x === 'UPI'}" data-act="paymode" data-v="${x}">${x}</button>`).join('')}</div></div></div>
     <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="paysave" data-no="${esc(v.no)}">${ico('check')} Save payment</button></div>`);
@@ -953,8 +973,15 @@ document.addEventListener('click', async e => {
     case 'wcreate': wCreate(); break;
     /* jobs */
     case 'ready': { const r = await act(() => post(`/api/jobs/${enc(d.id)}/ready`), 'Marked ready'); if (r){ await load(false); openWA('ready', {id:d.id}); } break; }
-    case 'mkinv': confirmBox('Make invoice and deliver?', 'The invoice is made from this job card, the advance is adjusted, and the car is marked delivered.', 'Make invoice', 'mkinvok', {id:d.id}); break;
-    case 'mkinvok': { closeModal(); const r = await act(() => post(`/api/jobs/${enc(d.id)}/invoice`), x => `Invoice ${x.no.slice(-4)} made. Car marked delivered.`); if (r) go('invoices', {no:r.no}); break; }
+    case 'mkinv': { const j = S.data && S.data.job; if (!j) break; S.invPick = {id:j.id, gst:!!j.gst}; invModal(); break; }
+    case 'invgst': if (S.invPick){ S.invPick.gst = d.v === '1'; invModal(); } break;
+    case 'mkinvok': {
+      const pick = S.invPick; if (!pick) break;
+      closeModal();
+      const r = await act(() => post(`/api/jobs/${enc(pick.id)}/invoice`, {gst:pick.gst}), x => `${pick.gst ? 'GST invoice' : 'Bill without GST'} ${shortNo(x.no)} made. Car marked delivered.`);
+      if (r){ S.invPick = null; go('invoices', {no:r.no}); }
+      break;
+    }
     case 'custjob': { const c = S.data && S.data.cur; if (!c) break; resetDraft(); fillFromMatch({name:c.name, ph:c.ph, email:c.email, cars:c.cars.map(x => ({reg:x.reg, model:x.model, color:x.color, seg:x.seg}))}); saveDraft(true); go('new'); toast('Customer details filled in'); break; }
     case 'printjob': printJob(); break;
     case 'doprintjob': { const j = S.data && S.data.job; closeModal(); if (j) printHTML(jobPaper(j, S.biz, S.data.qr, j.sig ? upUrl(j.sig) : ''), 'A5'); break; }
@@ -1034,8 +1061,8 @@ document.addEventListener('click', async e => {
     case 'wapreset': S.waEdit = {...(d.lang === 'en' ? WA_DEFAULTS_EN : WA_DEFAULTS_HI)}; render(); toast(d.lang === 'en' ? 'English messages filled in. Save to keep them.' : 'Hinglish messages filled in. Save to keep them.'); break;
     case 'wasave': { const r = await act(() => put('/api/settings/wa', {templates:S.waEdit}), 'WhatsApp messages saved'); if (r){ S.wa = r.wa; S.waEdit = null; render(); } break; }
     case 'invsave': {
-      const prefix = ($('#inv-prefix').value || '').trim(), terms = ($('#inv-terms').value || '').split('\n').map(x => x.trim()).filter(Boolean);
-      const r = await act(() => put('/api/settings/invoice', {prefix, terms}), 'Invoice settings saved'); if (r){ S.invoice = r.invoice; render(); } break;
+      const prefix = ($('#inv-prefix').value || '').trim(), billPrefix = ($('#inv-bprefix').value || '').trim(), terms = ($('#inv-terms').value || '').split('\n').map(x => x.trim()).filter(Boolean);
+      const r = await act(() => put('/api/settings/invoice', {prefix, billPrefix, terms}), 'Invoice settings saved'); if (r){ S.invoice = r.invoice; render(); } break;
     }
     case 'catadd': S.catEdit.push({from:'', to:''}); render(); { const ins = document.querySelectorAll('[data-cat]'); if (ins.length) ins[ins.length - 1].focus(); } break;
     case 'catrm': S.catEdit.splice(+d.i, 1); render(); break;
