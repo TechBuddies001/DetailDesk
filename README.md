@@ -11,7 +11,7 @@ It has three kinds of login:
 - **New job card in 5 steps:**
   1. Customer & vehicle. A returning customer is found by mobile or car number.
   2. Inspection: damage map, 6 photos, belongings.
-  3. Services: price by car segment. "PPF · selected panels" is priced per sq ft. PPF and coating details are recorded.
+  3. Services: price by car segment. "PPF · selected panels" is priced per sq ft. PPF and coating details are recorded. "Add service" puts a new service in the price list and on this job card (Owner, Super Admin, and Managers unless the Owner turns it off).
   4. Estimate & approval: discount limit, advance, consent and signature.
   5. Bay & team: suggested delivery time and priority.
 - **Job flow:** in progress → mark ready → invoice & deliver. Every step is logged with who did it.
@@ -29,7 +29,7 @@ It has three kinds of login:
   - Price list.
   - Bays and team.
   - Manager logins.
-  - What managers can do: see sales, cancel invoices, maximum discount.
+  - What managers can do: see sales, cancel invoices, add new services from a job card, maximum discount.
 
 **Super Admin only:**
 - Add Owner logins, and reset or turn off any login.

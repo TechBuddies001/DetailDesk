@@ -65,7 +65,7 @@ const SCHEMA = [
 ];
 const DEFAULTS = {
   biz:{name:'My Car Care Studio', tag:'', addr:'', ph:'', gstin:'', gst:true, upi:'', logo:''},
-  perms:{sales:false, cancel:false, disc:10},
+  perms:{sales:false, cancel:false, disc:10, addsvc:true},
   catalog:S.CATALOG0,
   bays:[{id:'Bay 1', type:'PPF'}, {id:'Bay 2', type:'PPF'}, {id:'Bay 3', type:'Coating'}, {id:'Bay 4', type:'Polish'}, {id:'Wash bay', type:'Wash'}, {id:'Service bay', type:'Mechanical'}],
   staff:[],

@@ -8,6 +8,7 @@ const isSuper = () => !!S.me && S.me.role === 'superadmin';
 const roleName = r => ({superadmin:'Super Admin', admin:'Owner · Admin', manager:'Manager'})[r] || r;
 const myRole = () => isSuper() ? 'Super Admin' : isAdmin() ? 'Admin' : 'Manager';
 const canSales = () => isAdmin() || !!S.perms.sales;
+const canAddSvc = () => isAdmin() || S.perms.addsvc !== false;
 const discLimit = () => isAdmin() ? 100 : Math.max(0, Math.min(100, +S.perms.disc || 0));
 const svc = id => svcIn(S.catalog, id);
 const hasCat = (svcs, c) => hasCatIn(S.catalog, svcs, c);
@@ -305,7 +306,7 @@ function wStep3(){
     const on = w.svcs.includes(s.id), price = s.perSq ? `${inr(s.perSq[i])}<small> /sq ft</small>` : inr(s.p[i]);
     return `<button class="svc ${on ? 'on' : ''}" aria-pressed="${on}" data-act="wsvc" data-id="${esc(s.id)}"><span class="cb">${on ? ico('check') : ''}</span><span class="svc-t"><b>${esc(s.name)}</b><span>${esc(s.cat)}${s.dur ? ' · ' + esc(s.dur) : ''}${s.note ? ' · ' + esc(s.note) : ''}</span></span><span class="svc-p">${price}</span></button>`;
   }).join('');
-  return `<section class="card"><div class="card-h"><h3>Services</h3><div class="card-h-r"><span class="small muted">Prices for <b>${SEGS[i]}</b> · change segment in step 1</span>${isAdmin() ? `<button class="btn sm" data-act="addsvc" data-wiz="1">${ico('plus')} Add service</button>` : ''}</div></div><div class="card-b">${tabs}<div class="svc-list">${list}</div></div></section>${hasCat(w.svcs, 'PPF') ? ppfConfig() : ''}${hasCat(w.svcs, 'Coating') ? coatConfig() : ''}`;
+  return `<section class="card"><div class="card-h"><h3>Services</h3><div class="card-h-r"><span class="small muted">Prices for <b>${SEGS[i]}</b> · change segment in step 1</span>${canAddSvc() ? `<button class="btn sm" data-act="addsvc" data-wiz="1">${ico('plus')} Add service</button>` : ''}</div></div><div class="card-b">${tabs}<div class="svc-list">${list}</div></div></section>${hasCat(w.svcs, 'PPF') ? ppfConfig() : ''}${hasCat(w.svcs, 'Coating') ? coatConfig() : ''}`;
 }
 const segBtns = (act, k, opts, cur, fmt = x => x) => `<div class="seg">${opts.map(o => `<button aria-pressed="${String(o) === String(cur)}" data-act="${act}" data-k="${k}" data-v="${o}">${fmt(o)}</button>`).join('')}</div>`;
 function ppfConfig(){
@@ -572,8 +573,9 @@ function vSettings(d){
       <p class="small muted" style="margin-bottom:6px">Managers can always make job cards and invoices and take payments. You decide the rest.</p>
       <div class="swrow"><div><div class="t">See sales figures</div><div class="s">Monthly sales, top services and how much each customer has spent.</div></div><input type="checkbox" class="sw" data-perm="sales" ${p.sales ? 'checked' : ''} aria-label="See sales figures"></div>
       <div class="swrow"><div><div class="t">Cancel invoices</div><div class="s">When off, only you can cancel an invoice.</div></div><input type="checkbox" class="sw" data-perm="cancel" ${p.cancel ? 'checked' : ''} aria-label="Cancel invoices"></div>
+      <div class="swrow"><div><div class="t">Add new services</div><div class="s">From step 3 of a new job card. The service and its prices go into your price list.</div></div><input type="checkbox" class="sw" data-perm="addsvc" ${p.addsvc !== false ? 'checked' : ''} aria-label="Add new services"></div>
       <div class="swrow"><div><div class="t">Maximum discount</div><div class="s">Managers can't give more than this on a job card.</div></div><div class="row"><input class="inp pin" id="perm-disc" inputmode="numeric" value="${+p.disc}" aria-label="Maximum discount percent"> %</div></div>
-      <div class="swrow"><div><div class="t">Settings, prices and logins</div><div class="s">Always owner only.</div></div>${chip(ico('lock') + ' Admin only', 'mute')}</div>
+      <div class="swrow"><div><div class="t">Settings, price changes and logins</div><div class="s">Always owner only.</div></div>${chip(ico('lock') + ' Admin only', 'mute')}</div>
     </div></section>`;
   if (t === 'invoice' && isSuper()){
     if (!S.catEdit) S.catEdit = S.cats.map(c => ({from:c, to:c}));
@@ -874,7 +876,7 @@ function openEditCust(){
 /* ================= settings saving ================= */
 let bizT, priceT, permT;
 function saveBiz(){ clearTimeout(bizT); bizT = setTimeout(async () => { const st = $('#biz-state'); try { const r = await put('/api/settings/biz', S.biz); S.biz = r.biz; renderBrand(); if (st) st.textContent = 'Saved.'; } catch (e){ if (st) st.textContent = e.message; else toast(e.message); } }, 700); }
-function savePrices(){ clearTimeout(priceT); priceT = setTimeout(async () => { const st = $('#price-state'); try { const r = await put('/api/settings/catalog', {catalog:S.catalog}); S.catalog = r.catalog; if (st) st.textContent = 'Prices saved.'; } catch (e){ toast(e.message); } }, 700); }
+function savePrices(){ clearTimeout(priceT); priceT = setTimeout(async () => { const st = $('#price-state'); try { const r = await put('/api/settings/catalog', {catalog:S.catalog, base:S.catalog.map(s => s.id)}); S.catalog = r.catalog; if (st) st.textContent = 'Prices saved.'; } catch (e){ toast(e.message); } }, 700); }
 function savePerms(){ clearTimeout(permT); permT = setTimeout(async () => { try { const r = await put('/api/settings/perms', S.perms); S.perms = r.perms; toast('Manager access updated'); } catch (e){ toast(e.message); } }, 500); }
 
 /* ================= events ================= */
@@ -986,12 +988,11 @@ document.addEventListener('click', async e => {
       if (same){ toast(`“${same.name}” is already in the price list under ${same.cat}`); $('#ns-name').focus(); break; }
       if (!p.some(Boolean)){ toast('Enter a price for at least one segment'); break; }
       const hrs = Math.max(.5, Math.min(200, parseFloat($('#ns-hrs').value) || 2));
-      const id = 'c' + Date.now().toString(36), wiz = !!d.wiz && S.view === 'new';
-      const next = [...S.catalog, {id, cat:$('#ns-cat').value, name, dur:`${hrs} h`, hrs, p:p.map(x => x || Math.max(...p))}];
-      const r = await act(() => put('/api/settings/catalog', {catalog:next}), wiz ? `${name} added to the price list and this job card` : `${name} added to the price list`);
+      const wiz = !!d.wiz && S.view === 'new';
+      const r = await act(() => post('/api/catalog', {name, cat:$('#ns-cat').value, hrs, p}), wiz ? `${name} added to the price list and this job card` : `${name} added to the price list`);
       if (r){
         S.catalog = r.catalog; closeModal();
-        const added = svc(id);
+        const id = r.id, added = svc(id);
         if (wiz && added){
           const w = W();
           if (!w.svcs.includes(id)) w.svcs.push(id);
@@ -1004,7 +1005,7 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'delsvc': { const s = svc(d.id); if (s) confirmBox('Remove this service?', `“${esc(s.name)}” is removed from the price list. Old job cards and invoices keep it.`, 'Remove', 'delsvcok', {id:d.id}); break; }
-    case 'delsvcok': { closeModal(); const r = await act(() => put('/api/settings/catalog', {catalog:S.catalog.filter(s => s.id !== d.id)}), 'Service removed'); if (r){ S.catalog = r.catalog; render(); } break; }
+    case 'delsvcok': { closeModal(); const r = await act(() => put('/api/settings/catalog', {catalog:S.catalog.filter(s => s.id !== d.id), base:S.catalog.map(s => s.id)}), 'Service removed'); if (r){ S.catalog = r.catalog; render(); } break; }
     case 'addbay': {
       const id = ($('#nb-id').value || '').trim(), type = ($('#nb-type').value || '').trim() || 'General';
       if (!id){ toast('Enter a bay name'); $('#nb-id').focus(); break; }

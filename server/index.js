@@ -37,9 +37,11 @@ function cleanLogin(v){
 }
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'superadmin'; // owner-level
 const isSuper = req => req.user.role === 'superadmin';
-const perms = () => getKV('perms', {sales:false, cancel:false, disc:10});
+const perms = () => getKV('perms', {sales:false, cancel:false, disc:10, addsvc:true});
 const canSales = async req => isAdmin(req) || !!(await perms()).sales;
 const canCancel = async req => isAdmin(req) || !!(await perms()).cancel;
+// Managers may add new services from a job card unless the owner turns it off (missing = on, for older saved settings).
+const canAddSvc = async req => isAdmin(req) || (await perms()).addsvc !== false;
 const discLimit = async req => isAdmin(req) ? 100 : Math.max(0, Math.min(100, +(await perms()).disc || 0));
 const whoName = u => u.role === 'manager' ? `${u.name} (Manager)` : u.role === 'superadmin' ? `${u.name} (Super Admin)` : u.name;
 const publicUrl = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
@@ -433,11 +435,11 @@ app.put('/api/settings/biz', adminOnly, async (req, res) => {
 });
 app.put('/api/settings/perms', adminOnly, async (req, res) => {
   const b = obj(req.body);
-  await setKV('perms', {sales:bool(b.sales), cancel:bool(b.cancel), disc:int(b.disc, 0, 100, 'Maximum discount')});
+  await setKV('perms', {sales:bool(b.sales), cancel:bool(b.cancel), disc:int(b.disc, 0, 100, 'Maximum discount'), addsvc:b.addsvc === undefined ? true : bool(b.addsvc)});
   res.json({ok:true, perms:await getKV('perms')});
 });
 app.put('/api/settings/catalog', adminOnly, async (req, res) => {
-  const list = arr(obj(req.body).catalog); if (!list.length) fail('The price list cannot be empty');
+  const b = obj(req.body), list = arr(b.catalog); if (!list.length) fail('The price list cannot be empty');
   const ids = new Set(), cats = await getKV('cats', S.CATS.slice(1));
   const clean = list.slice(0, 300).map(s => {
     s = obj(s);
@@ -452,8 +454,40 @@ app.put('/api/settings/catalog', adminOnly, async (req, res) => {
     if (id === 'ppf-custom' || s.perSq) o.perSq = prices; else o.p = prices;
     return o;
   });
-  await setKV('catalog', clean);
-  res.json({ok:true, catalog:clean});
+  const out = await tx(async c => {
+    // `base` = the ids this screen had loaded. A service someone else added since then is kept, not wiped by this save.
+    let next = clean;
+    if (Array.isArray(b.base)){
+      const base = new Set(b.base.map(String)), [[row]] = await c.query("SELECT v FROM kv WHERE k = 'catalog' FOR UPDATE");
+      const now = row ? JSON.parse(row.v) : [];
+      next = [...clean, ...now.filter(s => !base.has(s.id) && !ids.has(s.id))].slice(0, 300);
+    }
+    await setKV('catalog', next, c);
+    return next;
+  });
+  res.json({ok:true, catalog:out});
+});
+// Add one service: from Settings, or from step 3 of a new job card (managers too, unless the owner turned it off).
+app.post('/api/catalog', async (req, res) => {
+  if (!(await canAddSvc(req))) fail('Only the owner can add services. Ask the owner to turn on “Add new services” for managers.', 403);
+  const b = obj(req.body), name = str(b.name, 80, 'Service name'); if (!name) fail('Enter the service name');
+  const cats = await getKV('cats', S.CATS.slice(1)); if (!cats.includes(b.cat)) fail('Pick a category');
+  const p = arr(b.p).slice(0, 5).map(x => int(Math.round(+x || 0), 0, 10000000, 'Price'));
+  while (p.length < 5) p.push(0);
+  if (!p.some(Boolean)) fail('Enter a price for at least one segment');
+  const top = Math.max(...p), hrs = Math.round(Math.max(.5, Math.min(200, +b.hrs || 2)) * 2) / 2;
+  const out = await tx(async c => {
+    const [[row]] = await c.query("SELECT v FROM kv WHERE k = 'catalog' FOR UPDATE");
+    const list = row ? JSON.parse(row.v) : S.CATALOG0;
+    const same = list.find(s => String(s.name).trim().toLowerCase() === name.toLowerCase());
+    if (same) fail(`“${same.name}” is already in the price list under ${same.cat}`);
+    if (list.length >= 300) fail('The price list is full (300 services). Remove an old one first.');
+    let id; do { id = 'c' + crypto.randomBytes(5).toString('hex'); } while (list.some(s => s.id === id));
+    const next = [...list, {id, cat:b.cat, name, dur:`${hrs} h`, hrs, p:p.map(x => x || top)}];
+    await setKV('catalog', next, c);
+    return {id, catalog:next};
+  });
+  res.json({ok:true, ...out});
 });
 app.put('/api/settings/bays', adminOnly, async (req, res) => {
   const list = arr(obj(req.body).bays).slice(0, 50).map(b => ({id:str(obj(b).id, 30, 'Bay name'), type:str(obj(b).type, 30, 'Bay use') || 'General'}));

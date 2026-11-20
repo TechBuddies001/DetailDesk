@@ -267,3 +267,39 @@ test('page asks for versioned app files, so an update is never stuck in the brow
   }
   const js = await fetch(base + '/app.js?v=x'); assert.equal(js.status, 200);
 });
+
+test('adding a service: managers can from a job card unless the owner turns it off, and no save wipes it', async () => {
+  const m3 = client(); await owner.post('/api/users', {name:'Staff Svc', login:'9833344455', password:'staff123'});
+  let r = await m3.post('/api/login', {login:'9833344455', password:'staff123'}); assert.equal(r.status, 200);
+  let boot = (await owner.get('/api/boot')).data;
+  const cat = boot.cats[boot.cats.length - 1], stale = boot.catalog, perms = boot.perms;
+  assert.notEqual(perms.addsvc, false, 'on by default');
+  r = await anon.post('/api/catalog', {name:'X', cat, p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 401);
+  r = await m3.post('/api/catalog', {name:'Rain repellent glass', cat, hrs:1, p:[0, 900, 0, 0, 0]}); assert.equal(r.status, 200);
+  const id = r.data.id, added = r.data.catalog.find(s => s.id === id);
+  assert.deepEqual(added.p, [900, 900, 900, 900, 900], 'empty segments take the price given'); assert.equal(added.cat, cat); assert.equal(added.hrs, 1);
+  r = await m3.post('/api/catalog', {name:'  rain REPELLENT glass ', cat, p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 400, 'same name is stopped'); assert.match(r.data.error, /already in the price list/);
+  r = await m3.post('/api/catalog', {name:'Odd', cat:'No such category', p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 400);
+  r = await m3.post('/api/catalog', {name:'Free', cat, p:[0, 0, 0, 0, 0]}); assert.equal(r.status, 400);
+  r = await m3.post('/api/catalog', {name:'', cat, p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 400);
+  r = await m3.put('/api/settings/catalog', {catalog:stale}); assert.equal(r.status, 403, 'managers still cannot change the price list');
+  // the server prices a job card with the new service
+  r = await m3.post('/api/jobs', wizard({f:{...wizard().f, reg:'UK 07 ZZ 0001'}, svcs:[id], seg:1, disc:0, adv:0})); assert.equal(r.status, 200);
+  r = await m3.get('/api/jobs/' + r.data.id); assert.deepEqual(r.data.job.lines.map(l => [l.name, l.amt]), [['Rain repellent glass', 900]]);
+  // owner's screen loaded before the manager added it: saving prices keeps the new service, removing one still works
+  const edited = stale.map(s => s.id === stale[0].id ? {...s, [s.perSq ? 'perSq' : 'p']:(s.perSq || s.p).map(x => x + 1)} : s);
+  r = await owner.put('/api/settings/catalog', {catalog:edited, base:stale.map(s => s.id)}); assert.equal(r.status, 200);
+  assert.ok(r.data.catalog.some(s => s.id === id), 'kept'); assert.equal(r.data.catalog.length, stale.length + 1);
+  r = await owner.put('/api/settings/catalog', {catalog:r.data.catalog.filter(s => s.id !== id), base:r.data.catalog.map(s => s.id)});
+  assert.ok(!r.data.catalog.some(s => s.id === id), 'removed');
+  // two people adding at the same moment: both kept
+  const [a, b] = await Promise.all([owner.post('/api/catalog', {name:'Both one', cat, p:[1, 1, 1, 1, 1]}), m3.post('/api/catalog', {name:'Both two', cat, p:[2, 2, 2, 2, 2]})]);
+  assert.equal(a.status, 200); assert.equal(b.status, 200);
+  boot = (await owner.get('/api/boot')).data; assert.ok(['Both one', 'Both two'].every(n => boot.catalog.some(s => s.name === n)));
+  // owner turns it off: managers are stopped, the owner is not
+  r = await owner.put('/api/settings/perms', {...perms, addsvc:false}); assert.equal(r.data.perms.addsvc, false);
+  r = await m3.post('/api/catalog', {name:'Blocked', cat, p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 403);
+  r = await owner.post('/api/catalog', {name:'Owner only', cat, p:[1, 1, 1, 1, 1]}); assert.equal(r.status, 200);
+  // older screens that don't send the switch leave it on
+  const {addsvc, ...old} = perms; r = await owner.put('/api/settings/perms', old); assert.equal(r.data.perms.addsvc, true);
+});
