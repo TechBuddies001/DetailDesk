@@ -305,7 +305,7 @@ function wStep3(){
     const on = w.svcs.includes(s.id), price = s.perSq ? `${inr(s.perSq[i])}<small> /sq ft</small>` : inr(s.p[i]);
     return `<button class="svc ${on ? 'on' : ''}" aria-pressed="${on}" data-act="wsvc" data-id="${esc(s.id)}"><span class="cb">${on ? ico('check') : ''}</span><span class="svc-t"><b>${esc(s.name)}</b><span>${esc(s.cat)}${s.dur ? ' · ' + esc(s.dur) : ''}${s.note ? ' · ' + esc(s.note) : ''}</span></span><span class="svc-p">${price}</span></button>`;
   }).join('');
-  return `<section class="card"><div class="card-h"><h3>Services</h3><span class="small muted">Prices for <b>${SEGS[i]}</b> · change segment in step 1</span></div><div class="card-b">${tabs}<div class="svc-list">${list}</div></div></section>${hasCat(w.svcs, 'PPF') ? ppfConfig() : ''}${hasCat(w.svcs, 'Coating') ? coatConfig() : ''}`;
+  return `<section class="card"><div class="card-h"><h3>Services</h3><div class="card-h-r"><span class="small muted">Prices for <b>${SEGS[i]}</b> · change segment in step 1</span>${isAdmin() ? `<button class="btn sm" data-act="addsvc" data-wiz="1">${ico('plus')} Add service</button>` : ''}</div></div><div class="card-b">${tabs}<div class="svc-list">${list}</div></div></section>${hasCat(w.svcs, 'PPF') ? ppfConfig() : ''}${hasCat(w.svcs, 'Coating') ? coatConfig() : ''}`;
 }
 const segBtns = (act, k, opts, cur, fmt = x => x) => `<div class="seg">${opts.map(o => `<button aria-pressed="${String(o) === String(cur)}" data-act="${act}" data-k="${k}" data-v="${o}">${fmt(o)}</button>`).join('')}</div>`;
 function ppfConfig(){
@@ -781,13 +781,16 @@ function accountModal(){
     <button class="btn" type="submit">Change password</button></form>
     <button class="btn danger" data-act="logout">Log out</button>`);
 }
-function addSvcModal(){
+// Same form from Settings → Services & prices and from step 3 of a new job card (wiz: also ticks it on this job card).
+function addSvcModal(wiz){
+  const cat = wiz && W().cat !== 'All' ? W().cat : '', seg = wiz ? W().seg : -1;
   modal(`<div class="mh"><h3>Add a service</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
+    ${wiz ? '<p class="small muted">It is saved in the price list and ticked on this job card.</p>' : ''}
     <div class="field"><label for="ns-name">Service name</label><input class="inp" id="ns-name" autocomplete="off" maxlength="80"></div>
-    <div class="grid2"><div class="field"><label for="ns-cat">Category</label><select class="inp" id="ns-cat">${S.cats.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+    <div class="grid2"><div class="field"><label for="ns-cat">Category</label><select class="inp" id="ns-cat">${S.cats.map(c => `<option ${c === cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
     <div class="field"><label for="ns-hrs">Work time (hours)</label><input class="inp" id="ns-hrs" inputmode="decimal" value="2"></div></div>
-    <div class="grid2">${SEGS.map((s, i) => `<div class="field"><label for="ns-p${i}">${s} (₹)</label><input class="inp" id="ns-p${i}" inputmode="numeric" placeholder="0"></div>`).join('')}</div>
-    <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="addsvcok">${ico('check')} Add service</button></div>`);
+    <div class="grid2">${SEGS.map((s, i) => `<div class="field"><label for="ns-p${i}">${s} (₹)${i === seg ? ' · this car' : ''}</label><input class="inp" id="ns-p${i}" inputmode="numeric" placeholder="0"></div>`).join('')}</div>
+    <div class="m-row"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="addsvcok" ${wiz ? 'data-wiz="1"' : ''}>${ico('check')} Add service</button></div>`);
 }
 function userModal(){
   modal(`<div class="mh"><h3>${isSuper() ? 'Add a login' : 'Add a manager login'}</h3><button class="x" data-act="close" aria-label="Close">×</button></div>
@@ -975,15 +978,29 @@ document.addEventListener('click', async e => {
     case 'cancelinv': confirmBox('Cancel this invoice?', `${esc(d.no)} stays in your records marked Cancelled. GST rules don't allow reusing the number.`, 'Cancel invoice', 'cancelok', {no:d.no}); break;
     case 'cancelok': { closeModal(); const r = await act(() => post('/api/invoice/cancel', {no:d.no}), 'Invoice cancelled'); if (r) load(false); break; }
     /* settings */
-    case 'addsvc': addSvcModal(); break;
+    case 'addsvc': addSvcModal(!!d.wiz && S.view === 'new'); break;
     case 'addsvcok': {
       const name = ($('#ns-name').value || '').trim(), p = SEGS.map((_, i) => +digits($('#ns-p' + i).value) || 0);
       if (!name){ toast('Enter the service name'); $('#ns-name').focus(); break; }
+      const same = S.catalog.find(s => s.name.trim().toLowerCase() === name.toLowerCase());
+      if (same){ toast(`“${same.name}” is already in the price list under ${same.cat}`); $('#ns-name').focus(); break; }
       if (!p.some(Boolean)){ toast('Enter a price for at least one segment'); break; }
       const hrs = Math.max(.5, Math.min(200, parseFloat($('#ns-hrs').value) || 2));
-      const next = [...S.catalog, {id:'c' + Date.now().toString(36), cat:$('#ns-cat').value, name, dur:`${hrs} h`, hrs, p:p.map(x => x || Math.max(...p))}];
-      const r = await act(() => put('/api/settings/catalog', {catalog:next}), `${name} added to the price list`);
-      if (r){ S.catalog = r.catalog; closeModal(); render(); }
+      const id = 'c' + Date.now().toString(36), wiz = !!d.wiz && S.view === 'new';
+      const next = [...S.catalog, {id, cat:$('#ns-cat').value, name, dur:`${hrs} h`, hrs, p:p.map(x => x || Math.max(...p))}];
+      const r = await act(() => put('/api/settings/catalog', {catalog:next}), wiz ? `${name} added to the price list and this job card` : `${name} added to the price list`);
+      if (r){
+        S.catalog = r.catalog; closeModal();
+        const added = svc(id);
+        if (wiz && added){
+          const w = W();
+          if (!w.svcs.includes(id)) w.svcs.push(id);
+          if (w.cat !== 'All' && w.cat !== added.cat) w.cat = added.cat;
+          if (!w.dueSet) w.due = '';
+          saveDraft();
+        }
+        render();
+      }
       break;
     }
     case 'delsvc': { const s = svc(d.id); if (s) confirmBox('Remove this service?', `“${esc(s.name)}” is removed from the price list. Old job cards and invoices keep it.`, 'Remove', 'delsvcok', {id:d.id}); break; }
