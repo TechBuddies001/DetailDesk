@@ -266,6 +266,11 @@ test('page asks for versioned app files, so an update is never stuck in the brow
     assert.match(html, /<script src="\/app\.js\?v=[a-f0-9]{10}"><\/script>/); assert.match(html, /src="\/shared\.js\?v=/); assert.match(html, /href="\/styles\.css\?v=/);
   }
   const js = await fetch(base + '/app.js?v=x'); assert.equal(js.status, 200);
+  // open tabs learn about a new version from any API answer, or from /api/version (no login needed)
+  const v = (await (await fetch(base + '/')).text()).match(/app\.js\?v=(\w+)/)[1];
+  let r = await fetch(base + '/api/version'); assert.equal(r.status, 200); assert.equal((await r.json()).v, v); assert.equal(r.headers.get('cache-control'), 'no-store');
+  r = await fetch(base + '/api/session'); assert.equal(r.headers.get('x-app-version'), v);
+  r = await fetch(base + '/api/boot'); assert.equal(r.status, 401); assert.equal(r.headers.get('x-app-version'), v);
 });
 
 test('adding a service: managers can from a job card unless the owner turns it off, and no save wipes it', async () => {

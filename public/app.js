@@ -17,10 +17,24 @@ const hasCat = (svcs, c) => hasCatIn(S.catalog, svcs, c);
 const enc = encodeURIComponent;
 const upUrl = id => `/api/uploads/${enc(id)}`;
 
+/* New version check: the page was loaded as app.js?v=<version>; the server sends its version with every API answer. */
+const APP_V = (((document.querySelector('script[src*="app.js"]') || {}).src || '').match(/[?&]v=(\w+)/) || [])[1] || '';
+let updShown = false;
+function checkVer(v){
+  if (!APP_V || !v || v === APP_V || updShown) return;
+  updShown = true;
+  const el = document.createElement('div'); el.className = 'upd'; el.setAttribute('role', 'status');
+  el.innerHTML = '<span>The app was updated. Reload to get the latest version. Your draft is kept.</span><button class="btn sm pri" data-act="reloadapp">Reload</button>';
+  document.body.appendChild(el);
+}
+const pollVer = () => fetch('/api/version', {cache:'no-store'}).then(r => r.json()).then(d => checkVer(d && d.v)).catch(() => {});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollVer(); });
+setInterval(pollVer, 10 * 60e3);
 async function api(path, method = 'GET', body){
   let r;
   try { r = await fetch(path, {method, headers:body !== undefined ? {'Content-Type':'application/json'} : {}, body:body !== undefined ? JSON.stringify(body) : undefined, credentials:'same-origin'}); }
   catch (_) { throw new Error('No connection to the server. Check the internet and try again.'); }
+  checkVer(r.headers.get('X-App-Version'));
   let data = null; try { data = await r.json(); } catch (_) {}
   if (r.status === 401 && !path.startsWith('/api/login') && !path.startsWith('/api/me/')){ S.me = null; showAuth(); throw new Error((data && data.error) || 'Please log in again.'); }
   if (!r.ok) throw new Error((data && data.error) || 'Something went wrong. Please try again.');
@@ -932,6 +946,7 @@ document.addEventListener('click', async e => {
     case 'clearq': S.q = ''; $('#q').value = ''; load(false); break;
     case 'account': accountModal(); break;
     case 'logorm': clearTimeout(bizT); if (await act(async () => { const r = await put('/api/settings/biz', {...S.biz, logo:''}); S.biz = r.biz; return true; }, 'Logo removed')) rerender(); break;
+    case 'reloadapp': try { if (S.me) saveDraft(true); } catch (_) {} location.reload(); break;
     case 'logout': await post('/api/logout').catch(() => {}); S.me = null; draftCache = null; closeModal(); showAuth({}); break;
     case 'copy': try { await navigator.clipboard.writeText(d.text); toast('Copied'); } catch (_) { toast('Could not copy. Select the text and copy it.'); } break;
     /* wizard */

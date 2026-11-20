@@ -218,6 +218,8 @@ app.get('/healthz', async (req, res) => {
 app.use(['/api', '/i', '/j', '/logo'], (req, res, next) => dbReady ? next() : res.status(503).json({error:dbError}));
 
 app.use(express.json({limit:'8mb'}));
+// Every API answer says which app version the server runs, so an open tab with older screens can offer a reload.
+app.use('/api', (req, res, next) => { res.setHeader('X-App-Version', ASSET_V); next(); });
 // Same-origin check for state-changing API calls (cookies are SameSite=Lax; this blocks cross-site posts too).
 app.use('/api', (req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD') return next();
@@ -229,6 +231,7 @@ app.use('/api', (req, res, next) => {
 });
 
 /* ---------- auth (no login needed) ---------- */
+app.get('/api/version', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({v:ASSET_V}); });
 app.get('/api/session', async (req, res) => { const biz = await getKV('biz', {}); res.json({user:await A.currentUser(req), setupNeeded:(await userCount()) === 0, biz:{name:biz.name || '', logo:biz.logo || ''}}); });
 app.post('/api/setup', async (req, res) => {
   const b = obj(req.body);
